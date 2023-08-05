@@ -1,0 +1,23 @@
+[package]
+name = "dioxus-query"
+description = "Fully-typed, async, reusable state management and synchronization for Dioxus 🧬"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Marc Espín <mespinsanz@gmail.com>"]
+readme = "./README.md"
+homepage = "https://github.com/marc2332/dioxus-query"
+repository = "https://github.com/marc2332/dioxus-query"
+keywords = ["dioxus", "async", "state", "synchronization"]
+categories = ["GUI"]
+
+[dependencies]
+dioxus-core = "0.4.0"
+dioxus-hooks = "0.4.0"
+futures-util = "0.3.28"
+slab = "0.4.8"
+
+[dev-dependencies]
+dioxus = "0.4.0"
+dioxus-desktop = "0.4.0"
+tokio = { version = "1.29.1", features = ["time"] }
