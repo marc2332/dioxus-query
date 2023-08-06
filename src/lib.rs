@@ -1,79 +1,247 @@
 use dioxus_core::*;
 use dioxus_hooks::*;
-use futures_util::stream::StreamExt;
-use slab::Slab;
-use std::{fmt::Debug, future::Future, rc::Rc, sync::Arc};
+use futures_util::{future::BoxFuture, stream::StreamExt};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    hash::Hash,
+    ops::Deref,
+    rc::Rc,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-pub fn use_client<K: Clone + 'static>(cx: &ScopeState) -> &UseQueryClient<K> {
+const STALE_TIME: u64 = 100;
+
+pub fn use_client<T: Clone + 'static, E: Clone + 'static, K: Clone + 'static>(
+    cx: &ScopeState,
+) -> &Arc<UseQueryClient<T, E, K>> {
     use_context(cx).unwrap()
 }
 
-pub fn use_provide_client<K: Clone + 'static>(cx: &ScopeState) -> &UseQueryClient<K> {
-    use_context_provider(cx, || UseQueryClient {
-        queries_keys: Rc::default(),
+pub fn use_provide_client<T: Clone + 'static, E: Clone + 'static, K: Clone + 'static>(
+    cx: &ScopeState,
+) -> &UseQueryClient<T, E, K> {
+    let scheduler = cx.use_hook(|| cx.schedule_update_any());
+
+    let coroutine = use_coroutine(cx, {
+        move |mut rx: UnboundedReceiver<QueryMutationRequest<T, E, K>>| {
+            to_owned![scheduler];
+            async move {
+                while let Some(mutation) = rx.next().await {
+                    // Update to a Loading state
+                    match mutation {
+                        QueryMutationRequest::Multiple(triggers) => {
+                            for QueryData {
+                                value,
+                                query_fn,
+                                query_keys,
+                                listeners,
+                            } in triggers
+                            {
+                                // Only change to `Loading` if had been changed at some point
+                                if value.borrow().instant.is_some() {
+                                    let cached_value: Option<T> = value.borrow().clone().into();
+                                    *value.borrow_mut() = CachedResult {
+                                        value: QueryResult::Loading(cached_value),
+                                        instant: Some(Instant::now()),
+                                    };
+                                    for s in &listeners {
+                                        scheduler(*s);
+                                    }
+                                }
+
+                                // Fetch the result
+                                let new_value = (query_fn)(&query_keys).await;
+                                *value.borrow_mut() = CachedResult {
+                                    value: new_value,
+                                    instant: Some(Instant::now()),
+                                };
+                                for s in listeners {
+                                    scheduler(s);
+                                }
+                            }
+                        }
+                        QueryMutationRequest::Creation(QueryData {
+                            value,
+                            query_fn,
+                            query_keys,
+                            listeners,
+                        }) => {
+                            // If it's not fresh, the query runs, otherwise it uses the cached value
+                            if !value.borrow().is_fresh() {
+                                // Only change to `Loading` if had been changed at some point
+                                if value.borrow().instant.is_some() {
+                                    let cached_value: Option<T> = value.borrow().clone().into();
+                                    *value.borrow_mut() = CachedResult {
+                                        value: QueryResult::Loading(cached_value),
+                                        instant: Some(Instant::now()),
+                                    };
+                                    for s in &listeners {
+                                        scheduler(*s);
+                                    }
+                                }
+
+                                // Fetch the result
+                                let new_value = (query_fn)(&query_keys).await;
+                                *value.borrow_mut() = CachedResult {
+                                    value: new_value,
+                                    instant: Some(Instant::now()),
+                                };
+                            }
+
+                            for s in listeners {
+                                scheduler(s);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    use_context_provider(cx, || {
+        Arc::new(UseQueryClient {
+            queries_keys: Rc::default(),
+            queries_manager: coroutine.clone(),
+        })
     })
 }
 
-pub type QueryFn<R, K> = dyn Fn(&[K]) -> R + 'static;
+#[derive(Debug, Clone, PartialEq)]
+pub struct CachedResult<T, E> {
+    value: QueryResult<T, E>,
+    instant: Option<Instant>,
+}
 
-#[derive(Clone, Copy)]
-enum QueryMutationMode {
-    /// An effective mutation will make listening components re run
-    Effective,
-    /// A silent mutation will not make listening components re run
-    Silent,
+impl<T, E> CachedResult<T, E> {
+    pub fn is_fresh(&self) -> bool {
+        if let Some(instant) = self.instant {
+            instant.elapsed().as_millis() < Duration::from_millis(STALE_TIME).as_millis()
+        } else {
+            false
+        }
+    }
+}
+
+impl<T, E> Deref for CachedResult<T, E> {
+    type Target = QueryResult<T, E>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl<T, E> Default for CachedResult<T, E> {
+    fn default() -> Self {
+        Self {
+            value: Default::default(),
+            instant: None,
+        }
+    }
+}
+
+pub type QueryFn<T, E, K> = dyn Fn(&[K]) -> BoxFuture<QueryResult<T, E>>;
+
+#[derive(Clone)]
+struct QueryData<T, E, K> {
+    value: Rc<RefCell<CachedResult<T, E>>>,
+    listeners: HashSet<ScopeId>,
+    query_fn: Arc<QueryFn<T, E, K>>,
+    query_keys: Vec<K>,
 }
 
 #[derive(Clone)]
-pub struct UseQueryClient<K> {
-    queries_keys: Rc<RefCell<Slab<Subscriber<K>>>>,
+struct QueryListeners<T, E, K> {
+    value: Rc<RefCell<CachedResult<T, E>>>,
+    listeners: HashSet<ScopeId>,
+    query_fn: Arc<QueryFn<T, E, K>>,
 }
 
-impl<K: PartialEq> UseQueryClient<K> {
-    fn invalidate_query_with_mode(&self, keys_to_invalidate: &[K], mode: QueryMutationMode) {
-        for (_, sub) in self.queries_keys.borrow().iter() {
-            if sub.keys.iter().any(|k| keys_to_invalidate.contains(k)) {
-                sub.coroutine.send(mode);
+#[derive(Clone)]
+enum QueryMutationRequest<T, E, K> {
+    /// Invalidate a group of queries
+    Multiple(Vec<QueryData<T, E, K>>),
+    /// Try to run a query for the first time
+    Creation(QueryData<T, E, K>),
+}
+
+type QueriesKeys<T, E, K> = HashMap<Vec<K>, QueryListeners<T, E, K>>;
+
+#[derive(Clone)]
+pub struct UseQueryClient<T, E, K> {
+    queries_keys: Rc<RefCell<QueriesKeys<T, E, K>>>,
+    queries_manager: Coroutine<QueryMutationRequest<T, E, K>>,
+}
+
+impl<T, E, K: PartialEq + Clone + Eq + Hash> UseQueryClient<T, E, K> {
+    fn invalidate_queries_with_mode(&self, keys_to_invalidate: &[K]) {
+        let mut actually_subscribed = Vec::default();
+        for (
+            query_keys,
+            QueryListeners {
+                value,
+                listeners,
+                query_fn,
+            },
+        ) in self.queries_keys.borrow().iter()
+        {
+            let mut actual_listeners = HashSet::default();
+
+            // Add the listeners of this `query_keys` when at least one of the keys match
+            if query_keys.iter().any(|k| keys_to_invalidate.contains(k)) {
+                for id in listeners {
+                    actual_listeners.insert(*id);
+                }
+            }
+
+            // Save the group of listeners
+            if !actual_listeners.is_empty() {
+                actually_subscribed.push(QueryData {
+                    value: value.clone(),
+                    listeners: actual_listeners,
+                    query_fn: query_fn.clone(),
+                    query_keys: query_keys.clone(),
+                })
             }
         }
+
+        self.queries_manager
+            .send(QueryMutationRequest::Multiple(actually_subscribed));
     }
 
     pub fn invalidate_query(&self, key_to_invalidate: K) {
-        self.invalidate_query_with_mode(&[key_to_invalidate], QueryMutationMode::Effective);
+        self.invalidate_queries_with_mode(&[key_to_invalidate]);
     }
 
     pub fn invalidate_queries(&self, keys_to_invalidate: &[K]) {
-        self.invalidate_query_with_mode(keys_to_invalidate, QueryMutationMode::Effective);
-    }
-
-    pub fn silent_invalidate_query(&self, key_to_invalidate: K) {
-        self.invalidate_query_with_mode(&[key_to_invalidate], QueryMutationMode::Silent);
-    }
-
-    pub fn silent_invalidate_queries(&self, keys_to_invalidate: &[K]) {
-        self.invalidate_query_with_mode(keys_to_invalidate, QueryMutationMode::Silent);
+        self.invalidate_queries_with_mode(keys_to_invalidate);
     }
 }
 
-pub struct UseValue<T, E, K> {
-    client: UseQueryClient<K>,
-    slot: UseRef<QueryResult<T, E>>,
-    subscriber_id: usize,
+pub struct UseValue<T, E, K: Eq + Hash> {
+    client: Arc<UseQueryClient<T, E, K>>,
+    slot: Rc<RefCell<CachedResult<T, E>>>,
+    keys: Vec<K>,
+    scope_id: ScopeId,
 }
 
-impl<T, E, K> Drop for UseValue<T, E, K> {
+impl<T, E, K: Eq + Hash> Drop for UseValue<T, E, K> {
     fn drop(&mut self) {
         self.client
             .queries_keys
             .borrow_mut()
-            .remove(self.subscriber_id);
+            .get_mut(&self.keys)
+            .unwrap()
+            .listeners
+            .remove(&self.scope_id);
     }
 }
 
-impl<T: Clone, E: Clone, K: Clone> UseValue<T, E, K> {
+impl<T: Clone, E: Clone, K: Clone + Eq + Hash> UseValue<T, E, K> {
     /// Get the current result from the query.
-    pub fn result(&self) -> core::cell::Ref<QueryResult<T, E>> {
-        self.slot.read()
+    pub fn result(&self) -> Ref<CachedResult<T, E>> {
+        self.slot.borrow()
     }
 }
 
@@ -83,18 +251,21 @@ pub enum QueryResult<T, E> {
     Ok(T),
     /// Contains an errored state
     Err(E),
-    /// Contains an empty state
-    None,
     /// Contains a loading state that may or not have a cached result
     Loading(Option<T>),
 }
 
-impl<T, E> From<QueryResult<T, E>> for Option<T> {
-    fn from(value: QueryResult<T, E>) -> Self {
-        match value {
+impl<T, E> Default for QueryResult<T, E> {
+    fn default() -> Self {
+        Self::Loading(None)
+    }
+}
+
+impl<T, E> From<CachedResult<T, E>> for Option<T> {
+    fn from(result: CachedResult<T, E>) -> Self {
+        match result.value {
             QueryResult::Ok(v) => Some(v),
             QueryResult::Err(_) => None,
-            QueryResult::None => None,
             QueryResult::Loading(v) => v,
         }
     }
@@ -109,22 +280,20 @@ impl<T, E> From<Result<T, E>> for QueryResult<T, E> {
     }
 }
 
-struct Subscriber<K> {
-    keys: Vec<K>,
-    coroutine: Coroutine<QueryMutationMode>,
-}
-
-pub struct QueryConfig<R, T, E, K> {
-    keys: Vec<K>,
-    query_fn: Box<QueryFn<R, K>>,
+pub struct QueryConfig<T, E, K> {
+    query_keys: Vec<K>,
+    query_fn: Arc<Box<QueryFn<T, E, K>>>,
     initial_fn: Option<Box<dyn Fn() -> QueryResult<T, E>>>,
 }
 
-impl<R, T, E, K> QueryConfig<R, T, E, K> {
-    pub fn new(keys: Vec<K>, query_fn: impl Fn(&[K]) -> R + 'static) -> Self {
+impl<T, E, K> QueryConfig<T, E, K> {
+    pub fn new(
+        keys: Vec<K>,
+        query_fn: impl Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + 'static,
+    ) -> Self {
         Self {
-            keys,
-            query_fn: Box::new(query_fn),
+            query_keys: keys,
+            query_fn: Arc::new(Box::new(query_fn)),
             initial_fn: None,
         }
     }
@@ -136,89 +305,58 @@ impl<R, T, E, K> QueryConfig<R, T, E, K> {
 }
 
 /// Get a result given the query config, will re run when the query keys are invalidated.
-pub fn use_query_config<R, T, E, K>(
+pub fn use_query_config<T, E, K>(
     cx: &ScopeState,
-    config: impl FnOnce() -> QueryConfig<R, T, E, K>,
+    config: impl FnOnce() -> QueryConfig<T, E, K>,
 ) -> &UseValue<T, E, K>
 where
     T: 'static + PartialEq + Clone,
     E: 'static + PartialEq + Clone,
-    R: Future<Output = QueryResult<T, E>> + 'static,
-    K: Clone + 'static,
+    K: Clone + Eq + Hash + 'static,
 {
     let client = use_client(cx);
     let config = cx.use_hook(|| Arc::new(config()));
-    let value = use_ref(cx, || {
-        // Set an empty state if no initial function is passed
-        config
-            .initial_fn
-            .as_ref()
-            .map(|v| v())
-            .unwrap_or(QueryResult::None)
-    });
-
-    let coroutine = use_coroutine(cx, {
-        to_owned![value, config];
-        move |mut rx: UnboundedReceiver<QueryMutationMode>| {
-            to_owned![value];
-            async move {
-                while let Some(mutation) = rx.next().await {
-                    // Update to a Loading state
-                    let cached_value: Option<T> = value.read().clone().into();
-                    match mutation {
-                        QueryMutationMode::Effective => {
-                            *value.write() = QueryResult::Loading(cached_value);
-                        }
-                        QueryMutationMode::Silent => {
-                            *value.write_silent() = QueryResult::Loading(cached_value);
-                        }
-                    }
-
-                    // Fetch the result
-                    let res = (config.query_fn)(&config.keys).await;
-
-                    // Save the result
-                    match mutation {
-                        QueryMutationMode::Effective => {
-                            *value.write() = res;
-                        }
-                        QueryMutationMode::Silent => {
-                            *value.write_silent() = res;
-                        }
-                    }
-                }
-            }
-        }
-    });
 
     cx.use_hook(|| {
-        let subscriber_id = client.queries_keys.borrow_mut().insert(Subscriber {
-            keys: config.keys.clone(),
-            coroutine: coroutine.clone(),
-        });
+        let mut binding = client.queries_keys.borrow_mut();
+        let query_listeners = binding
+            .entry(config.query_keys.clone())
+            .or_insert(QueryListeners {
+                listeners: HashSet::default(),
+                value: Rc::default(),
+                query_fn: config.query_fn.clone(),
+            });
+        query_listeners.listeners.insert(cx.scope_id());
 
         // Initial async load
-        coroutine.send(QueryMutationMode::Effective);
+        client
+            .queries_manager
+            .send(QueryMutationRequest::Creation(QueryData {
+                value: query_listeners.value.clone(),
+                listeners: HashSet::from([cx.scope_id()]),
+                query_fn: query_listeners.query_fn.clone(),
+                query_keys: config.query_keys.clone(),
+            }));
 
         UseValue {
             client: client.clone(),
-            slot: value.clone(),
-            subscriber_id,
+            slot: query_listeners.value.clone(),
+            keys: config.query_keys.clone(),
+            scope_id: cx.scope_id(),
         }
     })
 }
 
 /// Get the result of the given query function, will re run when the query keys are invalidated.
-pub fn use_query<R, T: Clone, E: Clone, K>(
+pub fn use_query<T: Clone, E: Clone, K>(
     cx: &ScopeState,
     query_keys: impl FnOnce() -> Vec<K>,
-    query_fn: impl Fn(&[K]) -> R + 'static,
+    query_fn: impl Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + 'static,
 ) -> &UseValue<T, E, K>
 where
     T: 'static + PartialEq,
     E: 'static + PartialEq,
-    R: Future<Output = QueryResult<T, E>> + 'static,
-    K: Clone + 'static,
+    K: Clone + Eq + Hash + 'static,
 {
     use_query_config(cx, || QueryConfig::new(query_keys(), query_fn))
 }

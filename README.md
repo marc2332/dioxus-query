@@ -21,20 +21,25 @@ cargo run --example basic
 ## Usage
 
 ```rust
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 enum QueryKeys {
     User(usize),
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum QueryError {
-    UserNotFound(usize)
+    UserNotFound(usize),
 }
 
-async fn fetch_user(id: usize) -> QueryResult<String, QueryError> {
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+enum QueryValue {
+    UserName(String),
+}
+
+async fn fetch_user(id: usize) -> QueryResult<QueryValue, QueryError> {
     sleep(Duration::from_millis(1000)).await;
     match id {
-        0 => Ok("Marc".to_string()),
+        0 => Ok(QueryValue::UserName("Marc".to_string())),
         _ => Err(QueryError::UserNotFound(id)),
     }
     .into()
@@ -46,14 +51,16 @@ fn User(cx: Scope, id: usize) -> Element {
     to_owned![id];
 
     let value = use_query(cx, move || vec![QueryKeys::User(id)], {
-        move |_keys| fetch_user(id)
+        move |_keys| Box::pin(fetch_user(id))
     });
 
-    render!( p { "{value.result():?}" } )
+    let result: &QueryResult<QueryValue, QueryError> = &**value.result();
+
+    render!( p { "{result:?}" } )
 }
 
 fn app(cx: Scope) -> Element {
-    let client = use_provide_client(cx);
+    let client = use_provide_client::<QueryValue, QueryError, QueryKeys>(cx);
 
     let refresh = |_| client.invalidate_query(QueryKeys::User(0));
 
@@ -66,10 +73,11 @@ fn app(cx: Scope) -> Element {
 
 ## Features
 - [x] Renderer-agnostic
-- [x] Typed Query keys
-- [x] Manual query invalidation
+- [x] Typed Query keys, errors and results
+- [x] Manual query/queries invalidation
 - [ ] Automatic/smart query invalidation
 - [ ] Query aborting
-- [ ] Global Query caching
+- [x] Global Query caching
+- [ ] Parallel queries
 
 MIT License

@@ -12,6 +12,7 @@ keywords = ["dioxus", "async", "state", "synchronization"]
 categories = ["gui", "asynchronous"]
 
 [dependencies]
+anymap = "0.12.1"
 dioxus-core = "0.4.0"
 dioxus-hooks = "0.4.0"
 futures-util = "0.3.28"
