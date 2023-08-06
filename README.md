@@ -70,5 +70,6 @@ fn app(cx: Scope) -> Element {
 - [x] Manual query invalidation
 - [ ] Automatic/smart query invalidation
 - [ ] Query aborting
+- [ ] Global Query caching
 
 MIT License
