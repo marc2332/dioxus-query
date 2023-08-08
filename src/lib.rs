@@ -1,102 +1,45 @@
 use dioxus_core::*;
 use dioxus_hooks::*;
 use futures_util::{
-    future::{BoxFuture, self},
-    stream::{FuturesUnordered, StreamExt, FuturesOrdered, self},
+    future::BoxFuture,
+    stream::{FuturesUnordered, StreamExt},
 };
-use tokio::time::sleep;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
     hash::Hash,
     ops::Deref,
     rc::Rc,
-    sync::{Arc, Mutex, MutexGuard, RwLock, LockResult, RwLockReadGuard, RwLockWriteGuard},
+    sync::{Arc, RwLock, RwLockReadGuard},
     time::{Duration, Instant},
 };
 
-
 const STALE_TIME: u64 = 100;
 
-pub fn use_client<T: Clone + 'static, E: Clone + 'static, K: Clone + 'static>(
+/// Get access to the **QueryClient**.
+pub fn use_query_client<T: Clone + 'static, E: Clone + 'static, K: Clone + 'static>(
     cx: &ScopeState,
 ) -> &Arc<UseQueryClient<T, E, K>> {
     use_context(cx).unwrap()
 }
 
-struct QueuedLock<T: ?Sized> {
-    value: Arc<RwLock<T>>,
-    queue: Arc<RwLock<Vec<Box<dyn FnOnce(&mut T)>>>>
-}
-
-impl<T> Clone for QueuedLock<T> {
-    fn clone_from(&mut self, source: &Self) {
-        *self = source.clone()
-    }
-
-    fn clone(&self) -> Self {
-        Self { value: self.value.clone(), queue: self.queue.clone() }
-    }
-}
-
-/// TODO: Implement deref
-struct QueuedLockGuard<'a, T> {
-    lock: RwLockWriteGuard<'a, T>,
-    queue: Arc<RwLock<Vec<Box<dyn FnOnce(&mut T)>>>>
-}
-
-impl<T> Drop for QueuedLockGuard<'_, T> {
-    fn drop(&mut self) {
-        for cb in self.queue.write().unwrap().drain(..) {
-            cb(&mut self.lock)
-        }
-    }
-}
-
-impl<T> QueuedLock<T> {
-
-    pub fn new(v: T) -> Self {
-        Self {
-            value: Arc::new(RwLock::new(v)),
-            queue: Arc::default()
-        }
-    }
-
-    pub fn with(&self, cb: impl FnOnce(&mut T) + 'static) {
-        
-        self.queue.write().unwrap().push(Box::new(cb));
-
-        if let Ok(mut v) = self.value.try_write() {
-            for cb in self.queue.write().unwrap().drain(..) {
-                cb(&mut v)
-            }
-        }
-    }
-
-    pub fn read(&self)  -> QueuedLockGuard<T> {
-        QueuedLockGuard {
-            lock: self.value.write().unwrap(),
-            queue: self.queue.clone()
-        }
-    }
-}
-
-
-pub fn use_provide_client<T: Clone + 'static, E: Clone + 'static, K: Clone + 'static>(
+/// Provide a **QueryClient** to your app.
+pub fn use_provide_query_client<T: Clone + 'static, E: Clone + 'static, K: Clone + 'static>(
     cx: &ScopeState,
 ) -> &UseQueryClient<T, E, K> {
-    let scheduler = cx.use_hook(|| cx.schedule_update_any());
-    let manager = cx.use_hook(|| QueuedLock::new(FuturesOrdered::<BoxFuture<()>>::new()));
+    let tasks = cx.use_hook(|| Arc::new(RwLock::new(Vec::<BoxFuture<()>>::new())));
 
     let coroutine = use_coroutine(cx, {
-        let manager = manager.clone();
+        to_owned![tasks];
         move |mut rx: UnboundedReceiver<()>| {
-            to_owned![manager];
+            to_owned![tasks];
             async move {
                 while rx.next().await.is_some() {
-                    while manager.read().lock.next().await.is_some() {
-                        println!(".");
+                    let mut futures = FuturesUnordered::new();
+                    for task in tasks.write().unwrap().drain(..) {
+                        futures.push(task);
                     }
+                    while futures.next().await.is_some() {}
                 }
             }
         }
@@ -104,10 +47,10 @@ pub fn use_provide_client<T: Clone + 'static, E: Clone + 'static, K: Clone + 'st
 
     use_context_provider(cx, || {
         Arc::new(UseQueryClient {
-            queries_keys: Rc::default(),
-            manager2: manager.clone(),
-            scheduler: scheduler.clone(),
-            coroutine: coroutine.clone()
+            queries_registry: Rc::default(),
+            tasks: tasks.clone(),
+            scheduler: cx.schedule_update_any(),
+            coroutine: coroutine.clone(),
         })
     })
 }
@@ -147,17 +90,7 @@ impl<T, E> Default for CachedResult<T, E> {
 
 pub type QueryFn<T, E, K> = dyn Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + Send + Sync;
 
-#[derive(Clone)]
-struct QueryData<T, E, K> {
-    value: QueryValue<CachedResult<T, E>>,
-    listeners: HashSet<ScopeId>,
-    query_fn: Arc<Box<QueryFn<T, E, K>>>,
-    query_keys: Vec<K>,
-}
-
-/// TODO: Implement deref
-#[derive(Clone, Default)]
-struct QueryValue<T>(Arc<RwLock<T>>);
+type QueryValue<T> = Arc<RwLock<T>>;
 
 #[derive(Clone)]
 struct QueryListeners<T, E, K> {
@@ -166,15 +99,14 @@ struct QueryListeners<T, E, K> {
     query_fn: Arc<Box<QueryFn<T, E, K>>>,
 }
 
-
-type QueriesKeys<T, E, K> = HashMap<Vec<K>, QueryListeners<T, E, K>>;
+type QueriesRegistry<T, E, K> = HashMap<Vec<K>, QueryListeners<T, E, K>>;
 
 #[derive(Clone)]
 pub struct UseQueryClient<T, E, K> {
-    queries_keys: Rc<RefCell<QueriesKeys<T, E, K>>>,
-    manager2: QueuedLock<FuturesOrdered<BoxFuture<'static, ()>>>,
+    queries_registry: Rc<RefCell<QueriesRegistry<T, E, K>>>,
+    tasks: Arc<RwLock<Vec<BoxFuture<'static, ()>>>>,
     scheduler: Arc<dyn Fn(ScopeId) + Send + Sync>,
-    coroutine: Coroutine<()>
+    coroutine: Coroutine<()>,
 }
 
 impl<
@@ -183,54 +115,46 @@ impl<
         K: PartialEq + Clone + Eq + Hash + Send + Sync + 'static,
     > UseQueryClient<T, E, K>
 {
-    fn validate_new_query(&self, QueryData { value, listeners, query_fn, query_keys }: QueryData<T, E, K>) {
+    fn validate_new_query(
+        &self,
+        value: QueryValue<CachedResult<T, E>>,
+        query_listener: ScopeId,
+        query_fn: Arc<Box<QueryFn<T, E, K>>>,
+        query_keys: Vec<K>,
+    ) {
         // If it's not fresh, the query runs, otherwise it uses the cached value
-        if !value.0.read().unwrap().is_fresh() {
+        if !value.read().unwrap().is_fresh() {
             // Only change to `Loading` if had been changed at some point
-            if value.0.read().unwrap().instant.is_some() {
-                let cached_value: Option<T> = value.0.read().unwrap().clone().into();
-                *value.0.write().unwrap() = CachedResult {
+            if value.read().unwrap().instant.is_some() {
+                let cached_value: Option<T> = value.read().unwrap().clone().into();
+                *value.write().unwrap() = CachedResult {
                     value: QueryResult::Loading(cached_value),
                     instant: Some(Instant::now()),
                 };
-                for s in &listeners {
-                    (self.scheduler)(*s);
-                }
+                (self.scheduler)(query_listener);
             }
 
             let scheduler = self.scheduler.clone();
             let coroutine = self.coroutine.clone();
 
-            self.manager2.with(move |tasks| {
-                tasks.push_back(Box::pin(async move {
-                    // Fetch the result
-                   let new_value = (query_fn)(&query_keys).await;
-                   *value.0.write().unwrap() = CachedResult {
-                       value: new_value,
-                       instant: Some(Instant::now()),
-                   };
-   
-                   for s in listeners {
-                       scheduler(s);
-                   }
-               }));
-               coroutine.send(());
-            })
+            self.tasks.write().unwrap().push(Box::pin(async move {
+                // Fetch the result
+                let new_value = (query_fn)(&query_keys).await;
+                *value.write().unwrap() = CachedResult {
+                    value: new_value,
+                    instant: Some(Instant::now()),
+                };
 
-            
+                (scheduler)(query_listener);
+            }));
 
-           
+            coroutine.send(());
         } else {
-            for s in listeners {
-                (self.scheduler)(s);
-            }
+            (self.scheduler)(query_listener);
         }
-
-        
     }
 
     fn invalidate_queries_inner(&self, keys_to_invalidate: &[K]) {
-        let mut triggers = Vec::default();
         for (
             query_keys,
             QueryListeners {
@@ -238,75 +162,57 @@ impl<
                 listeners,
                 query_fn,
             },
-        ) in self.queries_keys.borrow().iter()
+        ) in self.queries_registry.borrow().iter()
         {
-            let mut actual_listeners = HashSet::default();
+            let mut query_listeners = HashSet::<ScopeId>::default();
 
             // Add the listeners of this `query_keys` when at least one of the keys match
             if query_keys.iter().any(|k| keys_to_invalidate.contains(k)) {
-                for id in listeners {
-                    actual_listeners.insert(*id);
+                for listener in listeners {
+                    query_listeners.insert(*listener);
                 }
             }
 
             // Save the group of listeners
-            if !actual_listeners.is_empty() {
-                triggers.push(QueryData {
-                    value: value.clone(),
-                    listeners: actual_listeners,
-                    query_fn: query_fn.clone(),
-                    query_keys: query_keys.clone(),
-                })
-            }
-        }
-
-        for QueryData {
-            value,
-            query_fn,
-            query_keys,
-            listeners,
-        } in triggers.drain(..)
-        {
-            // Only change to `Loading` if had been changed at some point
-            if value.0.read().unwrap().instant.is_some() {
-                let cached_value: Option<T> = value.0.read().unwrap().clone().into();
-                *value.0.write().unwrap() = CachedResult {
+            if !query_listeners.is_empty() {
+                // Only change to `Loading` if had been changed at some point
+                let cached_value: Option<T> = value.read().unwrap().clone().into();
+                *value.write().unwrap() = CachedResult {
                     value: QueryResult::Loading(cached_value),
                     instant: Some(Instant::now()),
                 };
-                for s in &listeners {
-                    (self.scheduler)(*s);
+                for listener in &query_listeners {
+                    (self.scheduler)(*listener);
                 }
-            }
 
-            let scheduler = self.scheduler.clone();
-            let value = value.clone();
-            let coroutine = self.coroutine.clone();
+                let scheduler = self.scheduler.clone();
+                to_owned![query_fn, query_keys, query_listeners, value];
 
-
-            self.manager2.with(move |tasks| {
-                tasks.push_back(Box::pin(async move {
+                self.tasks.write().unwrap().push(Box::pin(async move {
                     // Fetch the result
                     let new_value = (query_fn)(&query_keys).await;
-                    *value.0.write().unwrap() = CachedResult {
+                    *value.write().unwrap() = CachedResult {
                         value: new_value,
                         instant: Some(Instant::now()),
                     };
-                    for s in listeners {
-                        scheduler(s);
+
+                    for listener in query_listeners {
+                        scheduler(listener);
                     }
                 }));
-                coroutine.send(());
-            })
-
-            
+            }
         }
+        self.coroutine.send(());
     }
 
+    /// Invalidate a single query.
+    /// It will run alone, after previous queries have finished.
     pub fn invalidate_query(&self, key_to_invalidate: K) {
         self.invalidate_queries_inner(&[key_to_invalidate]);
     }
 
+    /// Invalidate a group of queries.
+    /// They will all run concurrently, after previous queries have finished.
     pub fn invalidate_queries(&self, keys_to_invalidate: &[K]) {
         self.invalidate_queries_inner(keys_to_invalidate);
     }
@@ -321,20 +227,24 @@ pub struct UseValue<T, E, K: Eq + Hash> {
 
 impl<T, E, K: Eq + Hash> Drop for UseValue<T, E, K> {
     fn drop(&mut self) {
-        self.client
-            .queries_keys
-            .borrow_mut()
-            .get_mut(&self.keys)
-            .unwrap()
-            .listeners
-            .remove(&self.scope_id);
+        let is_empty = {
+            let mut queries_registry = self.client.queries_registry.borrow_mut();
+            let query_listeners = queries_registry.get_mut(&self.keys).unwrap();
+            // Remove this `UseValue`'s listener
+            query_listeners.listeners.remove(&self.scope_id);
+            query_listeners.listeners.is_empty()
+        };
+        if is_empty {
+            // Remove the query keys if this was the last listener listening
+            self.client.queries_registry.borrow_mut().remove(&self.keys);
+        }
     }
 }
 
 impl<T: Clone, E: Clone, K: Clone + Eq + Hash> UseValue<T, E, K> {
     /// Get the current result from the query.
     pub fn result(&self) -> RwLockReadGuard<CachedResult<T, E>> {
-        self.slot.0.read().unwrap()
+        self.slot.read().unwrap()
     }
 }
 
@@ -407,27 +317,29 @@ where
     E: 'static + PartialEq + Clone,
     K: Clone + Eq + Hash + 'static,
 {
-    let client = use_client(cx);
+    let client = use_query_client(cx);
     let config = cx.use_hook(|| Arc::new(config()));
 
     cx.use_hook(|| {
-        let mut binding = client.queries_keys.borrow_mut();
-        let query_listeners = binding
-            .entry(config.query_keys.clone())
-            .or_insert(QueryListeners {
-                listeners: HashSet::default(),
-                value: QueryValue::default(),
-                query_fn: config.query_fn.clone(),
-            });
+        let mut queries_registry = client.queries_registry.borrow_mut();
+        // Register this `UseValue` as listener for the given combination of query keys
+        let query_listeners =
+            queries_registry
+                .entry(config.query_keys.clone())
+                .or_insert(QueryListeners {
+                    listeners: HashSet::default(),
+                    value: QueryValue::default(),
+                    query_fn: config.query_fn.clone(),
+                });
         query_listeners.listeners.insert(cx.scope_id());
 
         // Initial async load
-        client.validate_new_query(QueryData {
-            value: query_listeners.value.clone(),
-            listeners: HashSet::from([cx.scope_id()]),
-            query_fn: query_listeners.query_fn.clone(),
-            query_keys: config.query_keys.clone(),
-        });
+        client.validate_new_query(
+            query_listeners.value.clone(),
+            cx.scope_id(),
+            query_listeners.query_fn.clone(),
+            config.query_keys.clone(),
+        );
 
         UseValue {
             client: client.clone(),
@@ -438,7 +350,21 @@ where
     })
 }
 
-/// Get the result of the given query function, will re run when the query keys are invalidated.
+/// Register a query listener with the given combination of **query keys** and **query function**.
+///
+/// ## Example:
+///
+/// ```no_run
+/// let users_query = use_query(cx, move || vec![QueryKeys::User(id)], {
+///    move |keys| Box::pin(async {
+///        if let Some(QueryKeys::User(id)) = keys.first() {
+///            fetch_user(*id).await
+///        } else {
+///            QueryResult::Err(QueryError::Unknown)
+///        }
+///    })
+/// });
+/// ```
 pub fn use_query<T: Clone + Send + Sync, E: Clone + Send + Sync, K: Send + Sync>(
     cx: &ScopeState,
     query_keys: impl FnOnce() -> Vec<K>,

@@ -29,6 +29,7 @@ enum QueryKeys {
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum QueryError {
     UserNotFound(usize),
+    Unknown
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -51,7 +52,13 @@ fn User(cx: Scope, id: usize) -> Element {
     to_owned![id];
 
     let value = use_query(cx, move || vec![QueryKeys::User(id)], {
-        move |_keys| Box::pin(fetch_user(id))
+        move |keys| Box::pin(async {
+            if let Some(QueryKeys::User(id)) = keys.first() {
+                fetch_user(*id).await
+            } else {
+                QueryResult::Err(QueryError::Unknown)
+            }
+        })
     });
 
     let result: &QueryResult<QueryValue, QueryError> = &**value.result();
@@ -78,6 +85,13 @@ fn app(cx: Scope) -> Element {
 - [ ] Automatic/smart query invalidation
 - [ ] Query aborting
 - [x] Global Query caching
-- [ ] Parallel queries
+- [x] Concurrent queries when dispatched as groups
+- [x] Sequencial queries when dispatched individually
+
+## To Do
+- Tests
+- Documentation
+- Real-world examples
+- Clean up code
 
 MIT License
