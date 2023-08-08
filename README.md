@@ -67,7 +67,7 @@ fn User(cx: Scope, id: usize) -> Element {
 }
 
 fn app(cx: Scope) -> Element {
-    let client = use_provide_client::<QueryValue, QueryError, QueryKeys>(cx);
+    let client = use_provide_query_client::<QueryValue, QueryError, QueryKeys>(cx);
 
     let refresh = |_| client.invalidate_query(QueryKeys::User(0));
 
