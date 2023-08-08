@@ -13,18 +13,23 @@ fn main() {
     dioxus_desktop::launch(app);
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum QueryKeys {
     User(usize),
     Users,
 }
 
-async fn fetch_user(id: usize) -> QueryResult<String, ()> {
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+enum QueryValue {
+    UserName(String),
+}
+
+async fn fetch_user(id: usize) -> QueryResult<QueryValue, ()> {
     println!("Fetching user {id}...");
     sleep(Duration::from_millis(1000)).await;
     match id {
-        0 => Ok("Marc".to_string()),
-        1 => Ok("Evan".to_string()),
+        0 => Ok(QueryValue::UserName("Marc".to_string())),
+        1 => Ok(QueryValue::UserName("Evan".to_string())),
         _ => Err(()),
     }
     .into()
@@ -33,15 +38,21 @@ async fn fetch_user(id: usize) -> QueryResult<String, ()> {
 #[allow(non_snake_case)]
 #[inline_props]
 fn User(cx: Scope, id: usize) -> Element {
-    to_owned![id];
-
-    let value = use_query(cx, move || vec![QueryKeys::User(id), QueryKeys::Users], {
-        move |_keys| fetch_user(id)
+    let value = use_query(cx, move || vec![QueryKeys::User(*id), QueryKeys::Users], {
+        move |keys| {
+            Box::pin(async {
+                if let Some(QueryKeys::User(id)) = keys.first() {
+                    fetch_user(*id).await
+                } else {
+                    QueryResult::Err(())
+                }
+            })
+        }
     });
 
-    let result = &*value.result();
+    println!("Showing user {id}");
 
-    println!("User: {id} -> {result:?}");
+    let result: &QueryResult<QueryValue, ()> = &**value.result();
 
     render!( p { "{result:?}" } )
 }
@@ -49,24 +60,28 @@ fn User(cx: Scope, id: usize) -> Element {
 #[allow(non_snake_case)]
 #[inline_props]
 fn AnotherUser(cx: Scope, id: usize) -> Element {
-    to_owned![id];
-
     let value = use_query_config(cx, move || {
-        let query_keys = vec![QueryKeys::User(id), QueryKeys::Users];
-        let query_fn = move |_: &[QueryKeys]| fetch_user(id);
-        let query_initial = || Ok("Jonathan while loading".to_string()).into();
-        QueryConfig::new(query_keys, query_fn).initial(query_initial)
+        QueryConfig::new(vec![QueryKeys::User(*id), QueryKeys::Users], move |keys| {
+            Box::pin(async {
+                if let Some(QueryKeys::User(id)) = keys.first() {
+                    fetch_user(*id).await
+                } else {
+                    QueryResult::Err(())
+                }
+            })
+        })
+        .initial(|| Ok(QueryValue::UserName("Jonathan while loading".to_string())).into())
     });
 
-    let result = &*value.result();
+    println!("Showing another user {id}");
 
-    println!("Another User: {id} -> {result:?}");
+    let result: &QueryResult<QueryValue, ()> = &**value.result();
 
     render!( p { "{result:?}" } )
 }
 
 fn app(cx: Scope) -> Element {
-    let client = use_provide_client(cx);
+    let client = use_provide_query_client::<QueryValue, (), QueryKeys>(cx);
 
     let refresh_0 = |_| client.invalidate_query(QueryKeys::User(0));
 
