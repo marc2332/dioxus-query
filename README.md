@@ -85,8 +85,7 @@ fn app(cx: Scope) -> Element {
 - [ ] Automatic/smart query invalidation
 - [ ] Query aborting
 - [x] Global Query caching
-- [x] Concurrent queries when dispatched as groups
-- [x] Sequencial queries when dispatched individually
+- [x] Concurrent queries and mutations
 
 ## To Do
 - Tests
