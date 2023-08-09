@@ -54,7 +54,11 @@ fn fetch_user(keys: &[QueryKeys]) -> BoxFuture<QueryResult<QueryValue, QueryErro
 fn update_user(
     (id, _name): (usize, String),
 ) -> BoxFuture<'static, MutationResult<MutationValue, QueryError>> {
-    Box::pin(async move { Ok(MutationValue::UserUpdated(id)).into() })
+    Box::pin(async move {
+        println!("Mutating user");
+        sleep(Duration::from_millis(1000)).await;
+        Ok(MutationValue::UserUpdated(id)).into()
+    })
 }
 
 #[allow(non_snake_case)]
@@ -73,11 +77,14 @@ fn User(cx: Scope, id: usize) -> Element {
     println!("Showing user {id}");
 
     render!(
-       p { "{value.result().value():?}" }
-       button {
-           onclick: onclick,
-           "change to random"
-       }
+        p { "{value.result().value():?}" }
+        button { onclick: onclick,
+            if mutate.result().is_loading() {
+              "Loading..."
+           } else {
+               "Fake mutation"
+           }
+        }
     )
 }
 

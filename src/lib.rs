@@ -384,10 +384,18 @@ pub struct UseMutation<T, E, P> {
 }
 
 impl<T: Clone, E: Clone, P> UseMutation<T, E, P> {
+
+    /// Get the current result from the query.
+    pub fn result(&self) -> Ref<'_, MutationResult<T, E>> {
+        self.value.borrow()
+    }
+
     /// Call the mutation function with a set of arguments.
     pub async fn mutate(&self, arg: P) -> Ref<'_, MutationResult<T, E>> {
+        let cached_value = self.value.borrow().clone().into();
+
         // Set state to loading and notify
-        *self.value.borrow_mut() = MutationResult::Loading(self.value.borrow().clone().into());
+        *self.value.borrow_mut() = MutationResult::Loading(cached_value);
         // TODO optimization: Check if the value was already loading
         // to decide to call the scheduler or not
         (self.scheduler)(self.scope_id);
@@ -407,8 +415,10 @@ impl<T: Clone, E: Clone, P> UseMutation<T, E, P> {
     /// Call the mutation function silently with a set of arguments.
     /// This will not make the component re run.
     pub async fn mutate_silent(&self, arg: P) -> Ref<'_, MutationResult<T, E>> {
+        let cached_value = self.value.borrow().clone().into();
+
         // Set state to loading
-        *self.value.borrow_mut() = MutationResult::Loading(self.value.borrow().clone().into());
+        *self.value.borrow_mut() = MutationResult::Loading(cached_value);
 
         // Trigger the mutation function
         let value = (self.mutation_fn)(arg).await;
