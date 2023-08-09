@@ -37,39 +37,39 @@ enum QueryValue {
     UserName(String),
 }
 
-async fn fetch_user(id: usize) -> QueryResult<QueryValue, QueryError> {
-    sleep(Duration::from_millis(1000)).await;
-    match id {
-        0 => Ok(QueryValue::UserName("Marc".to_string())),
-        _ => Err(QueryError::UserNotFound(id)),
-    }
-    .into()
+fn fetch_user(keys: &[QueryKeys]) -> BoxFuture<QueryResult<QueryValue, QueryError>> {
+    Box::pin(async move {
+        if let Some(QueryKeys::User(id)) = keys.first() {
+            println!("Fetching user {id}");
+            sleep(Duration::from_millis(1000)).await;
+            match id {
+                0 => Ok(QueryValue::UserName("Marc".to_string())),
+                _ => Err(QueryError::UserNotFound(*id)),
+            }
+            .into()
+        } else {
+            QueryResult::Err(QueryError::Unknown)
+        }
+    })
 }
 
 #[allow(non_snake_case)]
 #[inline_props]
 fn User(cx: Scope, id: usize) -> Element {
-    to_owned![id];
+   let value = use_query(cx, move || vec![QueryKeys::User(*id)], fetch_user);
 
-    let value = use_query(cx, move || vec![QueryKeys::User(id)], {
-        move |keys| Box::pin(async {
-            if let Some(QueryKeys::User(id)) = keys.first() {
-                fetch_user(*id).await
-            } else {
-                QueryResult::Err(QueryError::Unknown)
-            }
-        })
-    });
-
-    let result: &QueryResult<QueryValue, QueryError> = &**value.result();
-
-    render!( p { "{result:?}" } )
+    render!( p { "{value.result().value():?}" } )
 }
 
 fn app(cx: Scope) -> Element {
     let client = use_provide_query_client::<QueryValue, QueryError, QueryKeys>(cx);
 
-    let refresh = |_| client.invalidate_query(QueryKeys::User(0));
+    let refresh = |_| {
+        to_owned![client];
+        cx.spawn(async move {
+            client.invalidate_query(QueryKeys::User(0)).await;
+        });
+    };
 
     render!(
         User { id: 0 }
