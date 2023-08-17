@@ -6,6 +6,7 @@ use futures_util::{
     stream::{FuturesUnordered, StreamExt},
 };
 use std::{
+    any::TypeId,
     collections::{HashMap, HashSet},
     fmt::Debug,
     hash::Hash,
@@ -40,6 +41,7 @@ pub fn use_provide_query_client<T: 'static, E: 'static, K: 'static>(
 pub struct CachedResult<T, E> {
     value: QueryResult<T, E>,
     instant: Option<Instant>,
+    has_been_queried: bool,
 }
 
 impl<T, E> CachedResult<T, E> {
@@ -53,6 +55,14 @@ impl<T, E> CachedResult<T, E> {
         } else {
             false
         }
+    }
+
+    pub fn has_been_cached(&self) -> bool {
+        self.instant.is_some()
+    }
+
+    pub fn has_been_queried(&self) -> bool {
+        self.has_been_queried
     }
 }
 
@@ -69,6 +79,7 @@ impl<T, E> Default for CachedResult<T, E> {
         Self {
             value: Default::default(),
             instant: None,
+            has_been_queried: false,
         }
     }
 }
@@ -84,7 +95,13 @@ struct QueryListeners<T, E, K> {
     query_fn: Arc<Box<QueryFn<T, E, K>>>,
 }
 
-type QueriesRegistry<T, E, K> = HashMap<Vec<K>, QueryListeners<T, E, K>>;
+#[derive(PartialEq, Eq, Hash, Clone)]
+struct RegistryEntry<K> {
+    query_keys: Vec<K>,
+    query_fn_id: TypeId,
+}
+
+type QueriesRegistry<T, E, K> = HashMap<RegistryEntry<K>, QueryListeners<T, E, K>>;
 
 #[derive(Clone)]
 pub struct UseQueryClient<T, E, K> {
@@ -92,47 +109,69 @@ pub struct UseQueryClient<T, E, K> {
     scheduler: Arc<dyn Fn(ScopeId) + Send + Sync>,
 }
 
-impl<T: Clone + 'static, E: Clone + 'static, K: PartialEq + Clone + 'static>
+impl<T: Clone + 'static, E: Clone + 'static, K: PartialEq + Clone + Eq + Hash + 'static>
     UseQueryClient<T, E, K>
 {
-    async fn validate_new_query(
-        &self,
-        value: QueryValue<CachedResult<T, E>>,
-        query_listener: ScopeId,
-        query_fn: Arc<Box<QueryFn<T, E, K>>>,
-        query_keys: Vec<K>,
-    ) {
-        // If it's not fresh, the query runs, otherwise it uses the cached value
-        if !value.read().unwrap().is_fresh() {
+    fn get_entry(&self, entry: &RegistryEntry<K>) -> QueryListeners<T, E, K> {
+        let registry = self.queries_registry.borrow();
+        registry.get(entry).unwrap().clone()
+    }
+
+    async fn validate_new_query(&self, entry: &RegistryEntry<K>) {
+        let QueryListeners {
+            value,
+            query_fn,
+            listeners,
+            ..
+        } = self.get_entry(entry);
+
+        let is_fresh = value.read().unwrap().is_fresh();
+        let is_loading = value.read().unwrap().is_loading();
+        let has_been_cached = value.read().unwrap().has_been_cached();
+        let has_been_queried = value.read().unwrap().has_been_queried();
+
+        if (!is_fresh && !is_loading) || !has_been_queried {
             // Only change to `Loading` if had been changed at some point
-            if value.read().unwrap().instant.is_some() {
+            if has_been_cached {
                 let cached_value: Option<T> = value.read().unwrap().clone().into();
                 *value.write().unwrap() = CachedResult {
                     value: QueryResult::Loading(cached_value),
                     instant: Some(Instant::now()),
+                    has_been_queried: true,
                 };
-                (self.scheduler)(query_listener);
+                for listener in listeners {
+                    (self.scheduler)(listener);
+                }
             }
 
-            let scheduler = self.scheduler.clone();
+            // Mark as queried
+            value.write().unwrap().has_been_queried = true;
 
             // Fetch the result
-            let new_value = (query_fn)(&query_keys).await;
+            let new_value = (query_fn)(&entry.query_keys).await;
             *value.write().unwrap() = CachedResult {
                 value: new_value,
                 instant: Some(Instant::now()),
+                has_been_queried: true,
             };
 
-            (scheduler)(query_listener);
+            // Get the listeners again in case they changed
+            let QueryListeners { listeners, .. } = self.get_entry(entry);
+
+            for listener in listeners {
+                (self.scheduler)(listener);
+            }
         } else {
-            (self.scheduler)(query_listener);
+            for listener in listeners {
+                (self.scheduler)(listener);
+            }
         }
     }
 
     async fn invalidate_queries_inner(&self, keys_to_invalidate: &[K]) {
         let tasks = FuturesUnordered::new();
         for (
-            query_keys,
+            RegistryEntry { query_keys, .. },
             QueryListeners {
                 value,
                 listeners,
@@ -156,6 +195,7 @@ impl<T: Clone + 'static, E: Clone + 'static, K: PartialEq + Clone + 'static>
                 *value.write().unwrap() = CachedResult {
                     value: QueryResult::Loading(cached_value),
                     instant: Some(Instant::now()),
+                    has_been_queried: true,
                 };
                 for listener in &query_listeners {
                     (self.scheduler)(*listener);
@@ -170,6 +210,7 @@ impl<T: Clone + 'static, E: Clone + 'static, K: PartialEq + Clone + 'static>
                     *value.write().unwrap() = CachedResult {
                         value: new_value,
                         instant: Some(Instant::now()),
+                        has_been_queried: true,
                     };
 
                     for listener in query_listeners {
@@ -198,7 +239,7 @@ impl<T: Clone + 'static, E: Clone + 'static, K: PartialEq + Clone + 'static>
 pub struct UseValue<T, E, K: Eq + Hash> {
     client: Arc<UseQueryClient<T, E, K>>,
     value: QueryValue<CachedResult<T, E>>,
-    keys: Vec<K>,
+    registry_entry: RegistryEntry<K>,
     scope_id: ScopeId,
 }
 
@@ -206,14 +247,17 @@ impl<T, E, K: Eq + Hash> Drop for UseValue<T, E, K> {
     fn drop(&mut self) {
         let is_empty = {
             let mut queries_registry = self.client.queries_registry.borrow_mut();
-            let query_listeners = queries_registry.get_mut(&self.keys).unwrap();
+            let query_listeners = queries_registry.get_mut(&self.registry_entry).unwrap();
             // Remove this `UseValue`'s listener
             query_listeners.listeners.remove(&self.scope_id);
             query_listeners.listeners.is_empty()
         };
         if is_empty {
             // Remove the query keys if this was the last listener listening
-            self.client.queries_registry.borrow_mut().remove(&self.keys);
+            self.client
+                .queries_registry
+                .borrow_mut()
+                .remove(&self.registry_entry);
         }
     }
 }
@@ -275,20 +319,23 @@ impl<T, E> From<Result<T, E>> for QueryResult<T, E> {
 }
 
 pub struct QueryConfig<T, E, K> {
-    query_keys: Vec<K>,
     query_fn: Arc<Box<QueryFn<T, E, K>>>,
     initial_fn: Option<Box<dyn Fn() -> QueryResult<T, E>>>,
+    registry_entry: RegistryEntry<K>,
 }
 
 impl<T, E, K> QueryConfig<T, E, K> {
-    pub fn new(
-        keys: Vec<K>,
-        query_fn: impl Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + 'static + Send + Sync,
-    ) -> Self {
+    pub fn new<F>(query_keys: Vec<K>, query_fn: F) -> Self
+    where
+        F: Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + 'static + Send + Sync,
+    {
         Self {
-            query_keys: keys,
             query_fn: Arc::new(Box::new(query_fn)),
             initial_fn: None,
+            registry_entry: RegistryEntry {
+                query_keys,
+                query_fn_id: TypeId::of::<F>(),
+            },
         }
     }
 
@@ -314,39 +361,30 @@ where
     cx.use_hook(|| {
         let mut queries_registry = client.queries_registry.borrow_mut();
         // Create a group of listeners for the given combination of keys
-        let query_listeners =
-            queries_registry
-                .entry(config.query_keys.clone())
-                .or_insert(QueryListeners {
-                    listeners: HashSet::default(),
-                    value: QueryValue::default(),
-                    query_fn: config.query_fn.clone(),
-                });
+        let query_listeners = queries_registry
+            .entry(config.registry_entry.clone())
+            .or_insert(QueryListeners {
+                listeners: HashSet::default(),
+                value: QueryValue::default(),
+                query_fn: config.query_fn.clone(),
+            });
         // Register this component as listener of the keys combination
         query_listeners.listeners.insert(cx.scope_id());
+
+        let entry = config.registry_entry.clone();
 
         // Initial async load
         cx.spawn({
             let client = client.clone();
-            let query_listeners = query_listeners.clone();
-            let scope_id = cx.scope_id();
-            let query_keys = config.query_keys.clone();
             async move {
-                client
-                    .validate_new_query(
-                        query_listeners.value.clone(),
-                        scope_id,
-                        query_listeners.query_fn.clone(),
-                        query_keys,
-                    )
-                    .await;
+                client.validate_new_query(&entry).await;
             }
         });
 
         UseValue {
             client: client.clone(),
             value: query_listeners.value.clone(),
-            keys: config.query_keys.clone(),
+            registry_entry: config.registry_entry.clone(),
             scope_id: cx.scope_id(),
         }
     })
@@ -384,7 +422,6 @@ pub struct UseMutation<T, E, P> {
 }
 
 impl<T: Clone, E: Clone, P> UseMutation<T, E, P> {
-
     /// Get the current result from the query.
     pub fn result(&self) -> Ref<'_, MutationResult<T, E>> {
         self.value.borrow()
