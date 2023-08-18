@@ -84,7 +84,7 @@ fn app(cx: Scope) -> Element {
 - [x] Manual query/queries invalidation
 - [ ] Automatic/smart query invalidation
 - [ ] Query aborting
-- [x] Global Query caching
+- [x] Global Query + Function caching
 - [x] Concurrent queries and mutations
 
 ## To Do
