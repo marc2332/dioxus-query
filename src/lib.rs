@@ -19,22 +19,17 @@ use std::{
 const STALE_TIME: u64 = 100;
 
 /// Get access to the **UseQueryClient**.
-pub fn use_query_client<T: 'static, E: 'static, K: 'static>(
+pub fn use_query_client<T: 'static + Clone, E: 'static + Clone, K: 'static + Clone>(
     cx: &ScopeState,
-) -> &Arc<UseQueryClient<T, E, K>> {
-    use_context(cx).unwrap()
-}
-
-/// Provide a **UseQueryClient** to your app.
-pub fn use_provide_query_client<T: 'static, E: 'static, K: 'static>(
-    cx: &ScopeState,
-) -> &UseQueryClient<T, E, K> {
-    use_context_provider(cx, || {
-        Arc::new(UseQueryClient {
+) -> UseQueryClient<T, E, K> {
+    if let Some(client) = cx.consume_context() {
+        client
+    } else {
+        cx.provide_root_context(UseQueryClient {
             queries_registry: Rc::default(),
             scheduler: cx.schedule_update_any(),
         })
-    })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -237,7 +232,7 @@ impl<T: Clone + 'static, E: Clone + 'static, K: PartialEq + Clone + Eq + Hash + 
 }
 
 pub struct UseValue<T, E, K: Eq + Hash> {
-    client: Arc<UseQueryClient<T, E, K>>,
+    client: UseQueryClient<T, E, K>,
     value: QueryValue<CachedResult<T, E>>,
     registry_entry: RegistryEntry<K>,
     scope_id: ScopeId,

@@ -47,7 +47,7 @@ fn fetch_user(keys: &[QueryKeys]) -> BoxFuture<QueryResult<QueryValue, ()>> {
 fn User(cx: Scope, id: usize) -> Element {
     let value = use_query(
         cx,
-        move || vec![QueryKeys::User(*id), QueryKeys::Users],
+        || vec![QueryKeys::User(*id), QueryKeys::Users],
         fetch_user,
     );
 
@@ -59,7 +59,7 @@ fn User(cx: Scope, id: usize) -> Element {
 #[allow(non_snake_case)]
 #[inline_props]
 fn AnotherUser(cx: Scope, id: usize) -> Element {
-    let value = use_query_config(cx, move || {
+    let value = use_query_config(cx, || {
         QueryConfig::new(vec![QueryKeys::User(*id), QueryKeys::Users], fetch_user)
             .initial(|| Ok(QueryValue::UserName("Jonathan while loading".to_string())).into())
     });
@@ -70,23 +70,29 @@ fn AnotherUser(cx: Scope, id: usize) -> Element {
 }
 
 fn app(cx: Scope) -> Element {
-    let client = use_provide_query_client::<QueryValue, (), QueryKeys>(cx);
+    let client = use_query_client::<QueryValue, (), QueryKeys>(cx);
 
-    let refresh_0 = |_| {
+    let refresh_0 = {
         to_owned![client];
-        cx.spawn(async move {
-            client.invalidate_query(QueryKeys::User(0)).await;
-        });
+        move |_| {
+            to_owned![client];
+            cx.spawn(async move {
+                client.invalidate_query(QueryKeys::User(0)).await;
+            });
+        }
     };
 
-    let refresh_1 = |_| {
+    let refresh_1 = {
         to_owned![client];
-        cx.spawn(async move {
-            client.invalidate_queries(&[QueryKeys::User(1)]).await;
-        });
+        move |_| {
+            to_owned![client];
+            cx.spawn(async move {
+                client.invalidate_queries(&[QueryKeys::User(1)]).await;
+            });
+        }
     };
 
-    let refresh_all = |_| {
+    let refresh_all = move |_| {
         to_owned![client];
         cx.spawn(async move {
             client.invalidate_query(QueryKeys::Users).await;

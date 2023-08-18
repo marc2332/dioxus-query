@@ -64,7 +64,7 @@ fn update_user(
 #[allow(non_snake_case)]
 #[inline_props]
 fn User(cx: Scope, id: usize) -> Element {
-    let value = use_query(cx, move || vec![QueryKeys::User(*id)], fetch_user);
+    let value = use_query(cx, || vec![QueryKeys::User(*id)], fetch_user);
     let mutate = use_mutation(cx, update_user);
 
     let onclick = |_| {
@@ -89,9 +89,9 @@ fn User(cx: Scope, id: usize) -> Element {
 }
 
 fn app(cx: Scope) -> Element {
-    let client = use_provide_query_client::<QueryValue, QueryError, QueryKeys>(cx);
+    let client = use_query_client::<QueryValue, QueryError, QueryKeys>(cx);
 
-    let refresh = |_| {
+    let refresh = move |_| {
         to_owned![client];
         cx.spawn(async move {
             client.invalidate_query(QueryKeys::User(0)).await;

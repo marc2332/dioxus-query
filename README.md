@@ -56,15 +56,15 @@ fn fetch_user(keys: &[QueryKeys]) -> BoxFuture<QueryResult<QueryValue, QueryErro
 #[allow(non_snake_case)]
 #[inline_props]
 fn User(cx: Scope, id: usize) -> Element {
-   let value = use_query(cx, move || vec![QueryKeys::User(*id)], fetch_user);
+   let value = use_query(cx, || vec![QueryKeys::User(*id)], fetch_user);
 
     render!( p { "{value.result().value():?}" } )
 }
 
 fn app(cx: Scope) -> Element {
-    let client = use_provide_query_client::<QueryValue, QueryError, QueryKeys>(cx);
+    let client = use_query_client::<QueryValue, QueryError, QueryKeys>(cx);
 
-    let refresh = |_| {
+    let refresh = move |_| {
         to_owned![client];
         cx.spawn(async move {
             client.invalidate_query(QueryKeys::User(0)).await;
