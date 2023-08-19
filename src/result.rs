@@ -1,5 +1,6 @@
 use crate::cached_result::CachedResult;
 
+/// The result of a query.
 #[derive(Clone, PartialEq, Debug)]
 pub enum QueryResult<T, E> {
     /// Contains a successful state

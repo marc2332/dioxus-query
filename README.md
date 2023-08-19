@@ -1,6 +1,6 @@
 # dioxus-query 🦀⚡
 
-**Fully-typed, async, reusable state management and synchronization** for [Dioxus 🧬](https://dioxuslabs.com/). Inspired by [`TanStack Query`](https://tanstack.com/query/latest/docs/react/overview).
+**Fully-typed, async, reusable state management and synchronization** for [Dioxus 🧬](https://dioxuslabs.com/). Inspired by [`TanStack Query`](https://tanstack.com/query/latest/docs/react/overview). See the [Docs](https://docs.rs/dioxus-query/latest/dioxus_query/).
 
 ⚠️ **Work in progress ⚠️**
 
@@ -15,7 +15,7 @@ cargo add dioxus-query
 ## Example
 
 ```bash	
-cargo run --example basic
+cargo run --example simple
 ```
 
 ## Usage

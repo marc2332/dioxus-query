@@ -1,7 +1,5 @@
 use dioxus_core::*;
-
 use dioxus_hooks::to_owned;
-pub use futures_util;
 use futures_util::future::BoxFuture;
 use std::{
     any::TypeId,
