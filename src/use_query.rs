@@ -1,12 +1,13 @@
 use dioxus_core::*;
 
+use dioxus_hooks::to_owned;
 pub use futures_util;
 use futures_util::future::BoxFuture;
 use std::{
     any::TypeId,
     collections::HashSet,
     hash::Hash,
-    sync::{Arc, RwLockReadGuard},
+    sync::{Arc, RwLock, RwLockReadGuard},
 };
 
 use crate::{
@@ -25,17 +26,25 @@ pub struct UseQuery<T, E, K: Eq + Hash> {
     scope_id: ScopeId,
 }
 
+impl<T, E, K: Eq + Hash> UseQuery<T, E, K> {
+    /// Get the current result from the query.
+    pub fn result(&self) -> RwLockReadGuard<CachedResult<T, E>> {
+        self.value.read().expect("Query value is already borrowed")
+    }
+}
+
 impl<T, E, K: Eq + Hash> Drop for UseQuery<T, E, K> {
     fn drop(&mut self) {
-        let is_empty = {
+        let was_last_listener = {
             let mut queries_registry = self.client.queries_registry.borrow_mut();
             let query_listeners = queries_registry.get_mut(&self.registry_entry).unwrap();
-            // Remove this `UseQuery`'s listener
+            // Remove this listener
             query_listeners.listeners.remove(&self.scope_id);
             query_listeners.listeners.is_empty()
         };
-        if is_empty {
-            // Remove the query keys if this was the last listener listening
+
+        // Clear the queries registry of this listener if it was the last one
+        if was_last_listener {
             self.client
                 .queries_registry
                 .borrow_mut()
@@ -44,17 +53,10 @@ impl<T, E, K: Eq + Hash> Drop for UseQuery<T, E, K> {
     }
 }
 
-impl<T, E, K: Eq + Hash> UseQuery<T, E, K> {
-    /// Get the current result from the query.
-    pub fn result(&self) -> RwLockReadGuard<CachedResult<T, E>> {
-        self.value.read().unwrap()
-    }
-}
-
 /// The configuration for a given query listener.
 pub struct QueryConfig<T, E, K> {
     query_fn: Arc<Box<QueryFn<T, E, K>>>,
-    initial_fn: Option<Box<dyn Fn() -> QueryResult<T, E>>>,
+    initial_value: Option<QueryResult<T, E>>,
     registry_entry: RegistryEntry<K>,
 }
 
@@ -65,7 +67,7 @@ impl<T, E, K> QueryConfig<T, E, K> {
     {
         Self {
             query_fn: Arc::new(Box::new(query_fn)),
-            initial_fn: None,
+            initial_value: None,
             registry_entry: RegistryEntry {
                 query_keys,
                 query_fn_id: TypeId::of::<F>(),
@@ -74,8 +76,8 @@ impl<T, E, K> QueryConfig<T, E, K> {
     }
 
     /// Set the initial value of the query.
-    pub fn initial(mut self, initial_data: impl Fn() -> QueryResult<T, E> + 'static) -> Self {
-        self.initial_fn = Some(Box::new(initial_data));
+    pub fn initial(mut self, initial_value: QueryResult<T, E>) -> Self {
+        self.initial_value = Some(initial_value);
         self
     }
 }
@@ -92,35 +94,38 @@ where
     K: Clone + Eq + Hash + 'static,
 {
     let client = use_query_client(cx);
-    let config = cx.use_hook(|| Arc::new(config()));
-
     cx.use_hook(|| {
+        let config = config();
+        let registry_entry = config.registry_entry.clone();
         let mut queries_registry = client.queries_registry.borrow_mut();
-        // Create a group of listeners for the given combination of keys
-        let query_listeners = queries_registry
-            .entry(config.registry_entry.clone())
-            .or_insert(QueryListeners {
-                listeners: HashSet::default(),
-                value: QueryValue::default(),
-                query_fn: config.query_fn.clone(),
-            });
-        // Register this component as listener of the keys combination
+
+        // Create a group of listeners for the given [RegistryEntry] key.
+        let query_listeners =
+            queries_registry
+                .entry(registry_entry.clone())
+                .or_insert(QueryListeners {
+                    listeners: HashSet::default(),
+                    value: QueryValue::new(RwLock::new(CachedResult::new(
+                        config.initial_value.unwrap_or_default(),
+                    ))),
+                    query_fn: config.query_fn.clone(),
+                });
+
+        // Register this listener's scope
         query_listeners.listeners.insert(cx.scope_id());
 
-        let entry = config.registry_entry.clone();
-
-        // Initial async load
+        // Asynchronously initialize the query value
         cx.spawn({
-            let client = client.clone();
+            to_owned![client, registry_entry];
             async move {
-                client.validate_new_query(&entry).await;
+                client.run_new_query(&registry_entry).await;
             }
         });
 
         UseQuery {
             client: client.clone(),
             value: query_listeners.value.clone(),
-            registry_entry: config.registry_entry.clone(),
+            registry_entry: registry_entry.clone(),
             scope_id: cx.scope_id(),
         }
     })
@@ -132,7 +137,7 @@ where
 /// ## Example:
 ///
 /// ```no_run
-/// let users_query = use_query(cx, move || vec![QueryKeys::User(id)], fetch_user);
+/// let users_query = use_query(cx, || vec![QueryKeys::User(id)], fetch_user);
 /// ```
 pub fn use_query<T: Clone, E: Clone, K>(
     cx: &ScopeState,

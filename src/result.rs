@@ -48,3 +48,9 @@ impl<T, E> From<Result<T, E>> for QueryResult<T, E> {
         }
     }
 }
+
+impl<T, E> From<T> for QueryResult<T, E> {
+    fn from(value: T) -> Self {
+        QueryResult::Ok(value)
+    }
+}

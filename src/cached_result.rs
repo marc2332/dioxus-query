@@ -17,6 +17,13 @@ pub struct CachedResult<T, E> {
 }
 
 impl<T, E> CachedResult<T, E> {
+    pub fn new(value: QueryResult<T, E>) -> Self {
+        Self {
+            value,
+            ..Default::default()
+        }
+    }
+
     /// Get this result's value
     pub fn value(&self) -> &QueryResult<T, E> {
         &self.value

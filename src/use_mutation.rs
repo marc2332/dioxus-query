@@ -16,7 +16,7 @@ pub struct UseMutation<T, E, P> {
 }
 
 impl<T: Clone, E: Clone, P> UseMutation<T, E, P> {
-    /// Get the current result from the query.
+    /// Get the current result from the query mutation.
     pub fn result(&self) -> Ref<'_, MutationResult<T, E>> {
         self.value.borrow()
     }
@@ -27,6 +27,7 @@ impl<T: Clone, E: Clone, P> UseMutation<T, E, P> {
 
         // Set state to loading and notify
         *self.value.borrow_mut() = MutationResult::Loading(cached_value);
+
         // TODO optimization: Check if the value was already loading
         // to decide to call the scheduler or not
         (self.scheduler)(self.scope_id);
@@ -36,6 +37,7 @@ impl<T: Clone, E: Clone, P> UseMutation<T, E, P> {
 
         // Set state to the new value and notify
         *self.value.borrow_mut() = value;
+
         // TODO optimization: Check if the previous and new value are
         // different to decide to call the scheduler or not
         (self.scheduler)(self.scope_id);
@@ -122,10 +124,8 @@ where
     E: 'static + PartialEq,
     P: 'static,
 {
-    let value = cx.use_hook(|| Rc::new(RefCell::new(MutationResult::Pending)));
-
     cx.use_hook(|| UseMutation {
-        value: value.clone(),
+        value: Rc::new(RefCell::new(MutationResult::Pending)),
         mutation_fn: Arc::new(Box::new(mutation_fn)),
         scheduler: cx.schedule_update_any(),
         scope_id: cx.scope_id(),

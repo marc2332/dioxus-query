@@ -41,6 +41,8 @@ pub(crate) struct QueryListeners<T, E, K> {
     pub(crate) query_fn: Arc<Box<QueryFn<T, E, K>>>,
 }
 
+/// Query listeners are grouped by their query keys and query functions
+/// to avoid requesting the same data multiple times
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub(crate) struct RegistryEntry<K> {
     pub(crate) query_keys: Vec<K>,
@@ -64,7 +66,7 @@ impl<T: Clone + 'static, E: Clone + 'static, K: PartialEq + Clone + Eq + Hash + 
         registry.get(entry).unwrap().clone()
     }
 
-    pub(crate) async fn validate_new_query(&self, entry: &RegistryEntry<K>) {
+    pub(crate) async fn run_new_query(&self, entry: &RegistryEntry<K>) {
         let QueryListeners {
             value,
             query_fn,
