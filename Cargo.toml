@@ -1,7 +1,7 @@
 [package]
 name = "dioxus-query"
 description = "Fully-typed, async, reusable state management and synchronization for Dioxus 🧬"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 authors = ["Marc Espín <mespinsanz@gmail.com>"]

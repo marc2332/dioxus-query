@@ -3,7 +3,7 @@
     windows_subsystem = "windows"
 )]
 
-use dioxus_query::*;
+use dioxus_query::prelude::*;
 use futures_util::future::BoxFuture;
 use std::time::Duration;
 use tokio::time::sleep;

@@ -3,7 +3,7 @@
     windows_subsystem = "windows"
 )]
 
-use dioxus_query::*;
+use dioxus_query::prelude::*;
 use futures_util::future::BoxFuture;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -61,7 +61,7 @@ fn User(cx: Scope, id: usize) -> Element {
 fn AnotherUser(cx: Scope, id: usize) -> Element {
     let value = use_query_config(cx, || {
         QueryConfig::new(vec![QueryKeys::User(*id), QueryKeys::Users], fetch_user)
-            .initial(|| Ok(QueryValue::UserName("Jonathan while loading".to_string())).into())
+            .initial(QueryValue::UserName("Jonathan while loading".to_string()).into())
     });
 
     println!("Showing another user {id}");
