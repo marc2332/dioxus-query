@@ -1,6 +1,5 @@
 use dioxus_core::*;
 use dioxus_hooks::*;
-pub use futures_util;
 use futures_util::{
     future::BoxFuture,
     stream::{FuturesUnordered, StreamExt},
@@ -30,9 +29,9 @@ pub fn use_query_client<T: 'static + Clone, E: 'static + Clone, K: 'static + Clo
     }
 }
 
-pub type QueryFn<T, E, K> = dyn Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + Send + Sync;
+pub(crate) type QueryFn<T, E, K> = dyn Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + Send + Sync;
 
-pub type QueryValue<T> = Arc<RwLock<T>>;
+pub(crate) type QueryValue<T> = Arc<RwLock<T>>;
 
 #[derive(Clone)]
 pub(crate) struct QueryListeners<T, E, K> {

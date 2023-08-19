@@ -1,6 +1,5 @@
 use dioxus_core::*;
 use dioxus_hooks::*;
-pub use futures_util;
 use futures_util::future::BoxFuture;
 use std::{fmt::Debug, rc::Rc, sync::Arc};
 
@@ -63,7 +62,7 @@ impl<T: Clone, E: Clone, P> UseMutation<T, E, P> {
     }
 }
 
-/// The result of mutation.
+/// The result of a mutation.
 #[derive(Clone, PartialEq, Debug)]
 pub enum MutationResult<T, E> {
     /// Mutation was successful
