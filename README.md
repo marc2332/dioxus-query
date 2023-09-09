@@ -1,3 +1,5 @@
+[![Discord Server](https://img.shields.io/discord/1015005816094478347.svg?logo=discord&style=flat-square)](https://discord.gg/gwuU8vGRPr)
+
 # dioxus-query 🦀⚡
 
 **Fully-typed, async, reusable state management and synchronization** for [Dioxus 🧬](https://dioxuslabs.com/). Inspired by [`TanStack Query`](https://tanstack.com/query/latest/docs/react/overview). See the [Docs](https://docs.rs/dioxus-query/latest/dioxus_query/).
