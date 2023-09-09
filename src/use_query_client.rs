@@ -3,13 +3,13 @@ use dioxus_hooks::*;
 use futures_util::{
     stream::{FuturesUnordered, StreamExt}, Future,
 };
+use instant::Instant;
 use std::{
     any::TypeId,
     collections::{HashMap, HashSet},
     hash::Hash,
     rc::Rc,
     sync::{Arc, RwLock},
-    time::Instant,
 };
 
 use crate::{cached_result::CachedResult, result::QueryResult};
