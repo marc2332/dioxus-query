@@ -29,7 +29,7 @@ pub fn use_query_client<T: 'static + Clone, E: 'static + Clone, K: 'static + Clo
     }
 }
 
-pub(crate) type QueryFn<T, E, K> = dyn Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + Send + Sync;
+pub(crate) type QueryFn<T, E, K> = dyn Fn(&[K]) -> BoxFuture<QueryResult<T, E>>;
 
 pub(crate) type QueryValue<T> = Arc<RwLock<T>>;
 
@@ -54,7 +54,7 @@ type QueriesRegistry<T, E, K> = HashMap<RegistryEntry<K>, QueryListeners<T, E, K
 #[derive(Clone)]
 pub struct UseQueryClient<T, E, K> {
     pub(crate) queries_registry: Rc<RefCell<QueriesRegistry<T, E, K>>>,
-    pub(crate) scheduler: Arc<dyn Fn(ScopeId) + Send + Sync>,
+    pub(crate) scheduler: Arc<dyn Fn(ScopeId)>,
 }
 
 impl<T: Clone + 'static, E: Clone + 'static, K: PartialEq + Clone + Eq + Hash + 'static>

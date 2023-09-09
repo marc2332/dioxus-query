@@ -61,7 +61,7 @@ pub struct QueryConfig<T, E, K> {
 impl<T, E, K> QueryConfig<T, E, K> {
     pub fn new<F>(query_keys: Vec<K>, query_fn: F) -> Self
     where
-        F: Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + 'static + Send + Sync,
+        F: Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + 'static,
     {
         Self {
             query_fn: Arc::new(Box::new(query_fn)),
@@ -140,7 +140,7 @@ where
 pub fn use_query<T: Clone, E: Clone, K>(
     cx: &ScopeState,
     query_keys: impl FnOnce() -> Vec<K>,
-    query_fn: impl Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + 'static + Send + Sync,
+    query_fn: impl Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + 'static,
 ) -> &UseQuery<T, E, K>
 where
     T: 'static + PartialEq,

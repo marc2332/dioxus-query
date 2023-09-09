@@ -10,7 +10,7 @@ pub type MutationFn<T, E, P> = dyn Fn(P) -> BoxFuture<'static, MutationResult<T,
 pub struct UseMutation<T, E, P> {
     value: Rc<RefCell<MutationResult<T, E>>>,
     mutation_fn: Arc<Box<MutationFn<T, E, P>>>,
-    scheduler: Arc<dyn Fn(ScopeId) + Send + Sync>,
+    scheduler: Arc<dyn Fn(ScopeId)>,
     scope_id: ScopeId,
 }
 
