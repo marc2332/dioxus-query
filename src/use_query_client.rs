@@ -1,8 +1,7 @@
 use dioxus_core::*;
 use dioxus_hooks::*;
 use futures_util::{
-    future::BoxFuture,
-    stream::{FuturesUnordered, StreamExt},
+    stream::{FuturesUnordered, StreamExt}, Future,
 };
 use std::{
     any::TypeId,
@@ -29,7 +28,7 @@ pub fn use_query_client<T: 'static + Clone, E: 'static + Clone, K: 'static + Clo
     }
 }
 
-pub(crate) type QueryFn<T, E, K> = dyn Fn(&[K]) -> BoxFuture<QueryResult<T, E>>;
+pub(crate) type QueryFn<T, E, K> = dyn Fn(Vec<K>) ->  Box<dyn Future<Output = QueryResult<T, E>>>;
 
 pub(crate) type QueryValue<T> = Arc<RwLock<T>>;
 
@@ -96,7 +95,9 @@ impl<T: Clone + 'static, E: Clone + 'static, K: PartialEq + Clone + Eq + Hash + 
             value.write().unwrap().has_been_queried = true;
 
             // Fetch the result
-            let new_value = (query_fn)(&entry.query_keys).await;
+            let fut = (query_fn)(entry.query_keys.clone());
+            let fut = Box::into_pin(fut);
+            let new_value = fut.await;
             *value.write().unwrap() = CachedResult {
                 value: new_value,
                 instant: Some(Instant::now()),
@@ -154,7 +155,9 @@ impl<T: Clone + 'static, E: Clone + 'static, K: PartialEq + Clone + Eq + Hash + 
 
                 tasks.push(Box::pin(async move {
                     // Fetch the result
-                    let new_value = (query_fn)(&query_keys).await;
+                    let fut = (query_fn)(query_keys.clone());
+                    let fut = Box::into_pin(fut);
+                    let new_value = fut.await;
                     *value.write().unwrap() = CachedResult {
                         value: new_value,
                         instant: Some(Instant::now()),

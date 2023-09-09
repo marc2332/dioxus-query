@@ -4,7 +4,6 @@
 )]
 
 use dioxus_query::prelude::*;
-use futures_util::future::BoxFuture;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -35,30 +34,26 @@ enum MutationValue {
     UserUpdated(usize),
 }
 
-fn fetch_user(keys: &[QueryKeys]) -> BoxFuture<QueryResult<QueryValue, QueryError>> {
-    Box::pin(async move {
-        if let Some(QueryKeys::User(id)) = keys.first() {
-            println!("Fetching user {id}");
-            sleep(Duration::from_millis(1000)).await;
-            match id {
-                0 => Ok(QueryValue::UserName("Marc".to_string())),
-                _ => Err(QueryError::UserNotFound(*id)),
-            }
-            .into()
-        } else {
-            QueryResult::Err(QueryError::Unknown)
+async fn fetch_user(keys: Vec<QueryKeys>) -> QueryResult<QueryValue, QueryError> {
+    if let Some(QueryKeys::User(id)) = keys.first() {
+        println!("Fetching user {id}");
+        sleep(Duration::from_millis(1000)).await;
+        match id {
+            0 => Ok(QueryValue::UserName("Marc".to_string())),
+            _ => Err(QueryError::UserNotFound(*id)),
         }
-    })
+        .into()
+    } else {
+        QueryResult::Err(QueryError::Unknown)
+    }
 }
 
-fn update_user(
+async fn update_user(
     (id, _name): (usize, String),
-) -> BoxFuture<'static, MutationResult<MutationValue, QueryError>> {
-    Box::pin(async move {
-        println!("Mutating user");
-        sleep(Duration::from_millis(1000)).await;
-        Ok(MutationValue::UserUpdated(id)).into()
-    })
+) -> MutationResult<MutationValue, QueryError> {
+    println!("Mutating user");
+    sleep(Duration::from_millis(1000)).await;
+    Ok(MutationValue::UserUpdated(id)).into()
 }
 
 #[allow(non_snake_case)]

@@ -1,6 +1,6 @@
 use dioxus_core::*;
 use dioxus_hooks::to_owned;
-use futures_util::future::BoxFuture;
+use futures_util::Future;
 use std::{
     any::TypeId,
     collections::HashSet,
@@ -59,12 +59,16 @@ pub struct QueryConfig<T, E, K> {
 }
 
 impl<T, E, K> QueryConfig<T, E, K> {
-    pub fn new<F>(query_keys: Vec<K>, query_fn: F) -> Self
+    pub fn new<F, QF>(query_keys: Vec<K>, query_fn: F) -> Self
     where
-        F: Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + 'static,
+        F: Fn(Vec<K>) -> QF + 'static,
+        QF: Future<Output = QueryResult<T, E>> + 'static
     {
         Self {
-            query_fn: Arc::new(Box::new(query_fn)),
+            query_fn: Arc::new(Box::new(move |q| {
+                let fut = query_fn(q);
+                Box::new(fut)
+            })),
             initial_value: None,
             registry_entry: RegistryEntry {
                 query_keys,
@@ -137,15 +141,17 @@ where
 /// ```no_run
 /// let users_query = use_query(cx, || vec![QueryKeys::User(id)], fetch_user);
 /// ```
-pub fn use_query<T: Clone, E: Clone, K>(
+pub fn use_query<T: Clone, E: Clone, K, QF, F>(
     cx: &ScopeState,
     query_keys: impl FnOnce() -> Vec<K>,
-    query_fn: impl Fn(&[K]) -> BoxFuture<QueryResult<T, E>> + 'static,
+    query_fn: F,
 ) -> &UseQuery<T, E, K>
 where
     T: 'static + PartialEq,
     E: 'static + PartialEq,
     K: Clone + Eq + Hash + 'static,
+    F: Fn(Vec<K>) -> QF + 'static,
+    QF: Future<Output = QueryResult<T, E>> + 'static
 {
     use_query_config(cx, || QueryConfig::new(query_keys(), query_fn))
 }

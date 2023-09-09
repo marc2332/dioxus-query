@@ -4,7 +4,6 @@
 )]
 
 use dioxus_query::prelude::*;
-use futures_util::future::BoxFuture;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -25,21 +24,19 @@ enum QueryValue {
     UserName(String),
 }
 
-fn fetch_user(keys: &[QueryKeys]) -> BoxFuture<QueryResult<QueryValue, ()>> {
-    Box::pin(async move {
-        if let Some(QueryKeys::User(id)) = keys.first() {
-            println!("Fetching user {id}");
-            sleep(Duration::from_millis(1000)).await;
-            match id {
-                0 => Ok(QueryValue::UserName("Marc".to_string())),
-                1 => Ok(QueryValue::UserName("Evan".to_string())),
-                _ => Err(()),
-            }
-            .into()
-        } else {
-            QueryResult::Err(())
+async fn fetch_user(keys: Vec<QueryKeys>) -> QueryResult<QueryValue, ()> {
+    if let Some(QueryKeys::User(id)) = keys.first() {
+        println!("Fetching user {id}");
+        sleep(Duration::from_millis(1000)).await;
+        match id {
+            0 => Ok(QueryValue::UserName("Marc".to_string())),
+            1 => Ok(QueryValue::UserName("Evan".to_string())),
+            _ => Err(()),
         }
-    })
+        .into()
+    } else {
+        QueryResult::Err(())
+    }
 }
 
 #[allow(non_snake_case)]
