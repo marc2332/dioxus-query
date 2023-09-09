@@ -4,13 +4,13 @@ use futures_util::{
     future::BoxFuture,
     stream::{FuturesUnordered, StreamExt},
 };
+use instant::Instant;
 use std::{
     any::TypeId,
     collections::{HashMap, HashSet},
     hash::Hash,
     rc::Rc,
     sync::{Arc, RwLock},
-    time::Instant,
 };
 
 use crate::{cached_result::CachedResult, result::QueryResult};

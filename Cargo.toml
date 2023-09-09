@@ -15,6 +15,7 @@ categories = ["gui", "asynchronous"]
 dioxus-core = "0.4"
 dioxus-hooks = "0.4"
 futures-util = "0.3.28"
+instant = { version = "0.1", features = ["wasm-bindgen"] }
 
 [dev-dependencies]
 dioxus = "0.4"

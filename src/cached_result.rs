@@ -1,8 +1,5 @@
-use std::{
-    fmt::Debug,
-    ops::Deref,
-    time::{Duration, Instant},
-};
+use instant::Instant;
+use std::{fmt::Debug, ops::Deref, time::Duration};
 
 use crate::result::QueryResult;
 
