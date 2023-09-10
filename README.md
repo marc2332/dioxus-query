@@ -2,14 +2,21 @@
 
 # dioxus-query 🦀⚡
 
-**Fully-typed, async, reusable state management and synchronization** for [Dioxus 🧬](https://dioxuslabs.com/). Inspired by [`TanStack Query`](https://tanstack.com/query/latest/docs/react/overview). See the [Docs](https://docs.rs/dioxus-query/latest/dioxus_query/).
+**Fully-typed, async, reusable state management and synchronization** for [Dioxus 🧬](https://dioxuslabs.com/). Inspired by [`TanStack Query`](https://tanstack.com/query/latest/docs/react/overview). 
+
+See the [Docs](https://docs.rs/dioxus-query/latest/dioxus_query/) or join the [Discord](https://discord.gg/gwuU8vGRPr). 
 
 ⚠️ **Work in progress ⚠️**
 
+## Support
+
+- **Dioxus v0.4** 🧬
+- All renderer ([web](https://dioxuslabs.com/learn/0.4/getting_started/wasm), [desktop](https://dioxuslabs.com/learn/0.4/getting_started/desktop), [freya](https://github.com/marc2332/freya), etc)
+- Both WASM and native targets
+
 ## Installation
 
-Compatible with **Dioxus v0.4**.
-
+Install the latest release:
 ```bash
 cargo add dioxus-query
 ```
