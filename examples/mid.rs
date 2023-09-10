@@ -4,7 +4,6 @@
 )]
 
 use dioxus_query::prelude::*;
-use futures_util::future::BoxFuture;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -31,36 +30,32 @@ enum QueryValue {
     UserAge(u8),
 }
 
-fn fetch_user(keys: &[QueryKeys]) -> BoxFuture<QueryResult<QueryValue, QueryError>> {
-    Box::pin(async move {
-        if let Some(QueryKeys::User(id)) = keys.first() {
-            println!("Fetching name of user {id}");
-            sleep(Duration::from_millis(650)).await;
-            match id {
-                0 => Ok(QueryValue::UserName("Marc".to_string())),
-                _ => Err(QueryError::UserNotFound(*id)),
-            }
-            .into()
-        } else {
-            QueryResult::Err(QueryError::Unknown)
+async fn fetch_user(keys: Vec<QueryKeys>) -> QueryResult<QueryValue, QueryError> {
+    if let Some(QueryKeys::User(id)) = keys.first() {
+        println!("Fetching name of user {id}");
+        sleep(Duration::from_millis(650)).await;
+        match id {
+            0 => Ok(QueryValue::UserName("Marc".to_string())),
+            _ => Err(QueryError::UserNotFound(*id)),
         }
-    })
+        .into()
+    } else {
+        QueryResult::Err(QueryError::Unknown)
+    }
 }
 
-fn fetch_user_age(keys: &[QueryKeys]) -> BoxFuture<QueryResult<QueryValue, QueryError>> {
-    Box::pin(async move {
-        if let Some(QueryKeys::User(id)) = keys.first() {
-            println!("Fetching age of user {id}");
-            sleep(Duration::from_millis(1000)).await;
-            match id {
-                0 => Ok(QueryValue::UserAge(0)),
-                _ => Err(QueryError::UserNotFound(*id)),
-            }
-            .into()
-        } else {
-            QueryResult::Err(QueryError::Unknown)
+async fn fetch_user_age(keys: Vec<QueryKeys>) -> QueryResult<QueryValue, QueryError> {
+    if let Some(QueryKeys::User(id)) = keys.first() {
+        println!("Fetching age of user {id}");
+        sleep(Duration::from_millis(1000)).await;
+        match id {
+            0 => Ok(QueryValue::UserAge(0)),
+            _ => Err(QueryError::UserNotFound(*id)),
         }
-    })
+        .into()
+    } else {
+        QueryResult::Err(QueryError::Unknown)
+    }
 }
 
 #[allow(non_snake_case)]

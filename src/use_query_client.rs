@@ -1,8 +1,8 @@
 use dioxus_core::*;
 use dioxus_hooks::*;
 use futures_util::{
-    future::BoxFuture,
     stream::{FuturesUnordered, StreamExt},
+    Future,
 };
 use instant::Instant;
 use std::{
@@ -16,9 +16,12 @@ use std::{
 use crate::{cached_result::CachedResult, result::QueryResult};
 
 /// Get access to the [UseQueryClient].
-pub fn use_query_client<T: 'static + Clone, E: 'static + Clone, K: 'static + Clone>(
-    cx: &ScopeState,
-) -> UseQueryClient<T, E, K> {
+pub fn use_query_client<T, E, K>(cx: &ScopeState) -> UseQueryClient<T, E, K>
+where
+    T: 'static + Clone,
+    E: 'static + Clone,
+    K: 'static + Clone,
+{
     if let Some(client) = cx.consume_context() {
         client
     } else {
@@ -29,7 +32,7 @@ pub fn use_query_client<T: 'static + Clone, E: 'static + Clone, K: 'static + Clo
     }
 }
 
-pub(crate) type QueryFn<T, E, K> = dyn Fn(&[K]) -> BoxFuture<QueryResult<T, E>>;
+pub(crate) type QueryFn<T, E, K> = dyn Fn(Vec<K>) -> Box<dyn Future<Output = QueryResult<T, E>>>;
 
 pub(crate) type QueryValue<T> = Arc<RwLock<T>>;
 
@@ -48,7 +51,7 @@ pub(crate) struct RegistryEntry<K> {
     pub(crate) query_fn_id: TypeId,
 }
 
-type QueriesRegistry<T, E, K> = HashMap<RegistryEntry<K>, QueryListeners<T, E, K>>;
+pub(crate) type QueriesRegistry<T, E, K> = HashMap<RegistryEntry<K>, QueryListeners<T, E, K>>;
 
 /// Manage the queries of your application.
 #[derive(Clone)]
@@ -57,8 +60,11 @@ pub struct UseQueryClient<T, E, K> {
     pub(crate) scheduler: Arc<dyn Fn(ScopeId)>,
 }
 
-impl<T: Clone + 'static, E: Clone + 'static, K: PartialEq + Clone + Eq + Hash + 'static>
-    UseQueryClient<T, E, K>
+impl<T, E, K> UseQueryClient<T, E, K>
+where
+    T: 'static + Clone,
+    E: 'static + Clone,
+    K: 'static + PartialEq + Eq + Hash + Clone,
 {
     pub(crate) fn get_entry(&self, entry: &RegistryEntry<K>) -> QueryListeners<T, E, K> {
         let registry = self.queries_registry.borrow();
@@ -96,7 +102,9 @@ impl<T: Clone + 'static, E: Clone + 'static, K: PartialEq + Clone + Eq + Hash + 
             value.write().unwrap().has_been_queried = true;
 
             // Fetch the result
-            let new_value = (query_fn)(&entry.query_keys).await;
+            let fut = (query_fn)(entry.query_keys.clone());
+            let fut = Box::into_pin(fut);
+            let new_value = fut.await;
             *value.write().unwrap() = CachedResult {
                 value: new_value,
                 instant: Some(Instant::now()),
@@ -154,7 +162,9 @@ impl<T: Clone + 'static, E: Clone + 'static, K: PartialEq + Clone + Eq + Hash + 
 
                 tasks.push(Box::pin(async move {
                     // Fetch the result
-                    let new_value = (query_fn)(&query_keys).await;
+                    let fut = (query_fn)(query_keys.clone());
+                    let fut = Box::into_pin(fut);
+                    let new_value = fut.await;
                     *value.write().unwrap() = CachedResult {
                         value: new_value,
                         instant: Some(Instant::now()),

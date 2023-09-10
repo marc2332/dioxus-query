@@ -1,15 +1,15 @@
 use dioxus_core::*;
 use dioxus_hooks::*;
-use futures_util::future::BoxFuture;
+use futures_util::Future;
 use std::{fmt::Debug, rc::Rc, sync::Arc};
 
-pub type MutationFn<T, E, P> = dyn Fn(P) -> BoxFuture<'static, MutationResult<T, E>>;
+pub type MutationFn<T, E, A> = dyn Fn(A) -> Box<dyn Future<Output = MutationResult<T, E>>>;
 
 /// A query mutation.
 #[derive(Clone)]
-pub struct UseMutation<T, E, P> {
+pub struct UseMutation<T, E, A> {
     value: Rc<RefCell<MutationResult<T, E>>>,
-    mutation_fn: Arc<Box<MutationFn<T, E, P>>>,
+    mutation_fn: Arc<Box<MutationFn<T, E, A>>>,
     scheduler: Arc<dyn Fn(ScopeId)>,
     scope_id: ScopeId,
 }
@@ -32,7 +32,9 @@ impl<T: Clone, E: Clone, P> UseMutation<T, E, P> {
         (self.scheduler)(self.scope_id);
 
         // Trigger the mutation function
-        let value = (self.mutation_fn)(arg).await;
+        let fut = (self.mutation_fn)(arg);
+        let fut = Box::into_pin(fut);
+        let value = fut.await;
 
         // Set state to the new value and notify
         *self.value.borrow_mut() = value;
@@ -53,7 +55,9 @@ impl<T: Clone, E: Clone, P> UseMutation<T, E, P> {
         *self.value.borrow_mut() = MutationResult::Loading(cached_value);
 
         // Trigger the mutation function
-        let value = (self.mutation_fn)(arg).await;
+        let fut = (self.mutation_fn)(arg);
+        let fut = Box::into_pin(fut);
+        let value = fut.await;
 
         // Set state to the new value
         *self.value.borrow_mut() = value;
@@ -114,18 +118,20 @@ impl<T, E> From<MutationResult<T, E>> for Option<T> {
 }
 
 /// Create mutation. See [UseMutation] on how to use it.
-pub fn use_mutation<T, E, P>(
-    cx: &ScopeState,
-    mutation_fn: impl Fn(P) -> BoxFuture<'static, MutationResult<T, E>> + 'static,
-) -> &UseMutation<T, E, P>
+pub fn use_mutation<T, E, A, M, F>(cx: &ScopeState, mutation_fn: M) -> &UseMutation<T, E, A>
 where
     T: 'static + PartialEq,
     E: 'static + PartialEq,
-    P: 'static,
+    A: 'static,
+    M: Fn(A) -> F + 'static,
+    F: Future<Output = MutationResult<T, E>> + 'static,
 {
     cx.use_hook(|| UseMutation {
         value: Rc::new(RefCell::new(MutationResult::Pending)),
-        mutation_fn: Arc::new(Box::new(mutation_fn)),
+        mutation_fn: Arc::new(Box::new(move |p| {
+            let fut = mutation_fn(p);
+            Box::new(fut)
+        })),
         scheduler: cx.schedule_update_any(),
         scope_id: cx.scope_id(),
     })
