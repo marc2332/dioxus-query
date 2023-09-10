@@ -11,7 +11,7 @@ See the [Docs](https://docs.rs/dioxus-query/latest/dioxus_query/) or join the [D
 ## Support
 
 - **Dioxus v0.4** 🧬
-- All renderer ([web](https://dioxuslabs.com/learn/0.4/getting_started/wasm), [desktop](https://dioxuslabs.com/learn/0.4/getting_started/desktop), [freya](https://github.com/marc2332/freya), etc)
+- All renderers ([web](https://dioxuslabs.com/learn/0.4/getting_started/wasm), [desktop](https://dioxuslabs.com/learn/0.4/getting_started/desktop), [freya](https://github.com/marc2332/freya), etc)
 - Both WASM and native targets
 
 ## Installation
