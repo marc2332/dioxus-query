@@ -39,20 +39,18 @@ enum QueryValue {
     UserName(String),
 }
 
-fn fetch_user(keys: &[QueryKeys]) -> BoxFuture<QueryResult<QueryValue, QueryError>> {
-    Box::pin(async move {
-        if let Some(QueryKeys::User(id)) = keys.first() {
-            println!("Fetching user {id}");
-            sleep(Duration::from_millis(1000)).await;
-            match id {
-                0 => Ok(QueryValue::UserName("Marc".to_string())),
-                _ => Err(QueryError::UserNotFound(*id)),
-            }
-            .into()
-        } else {
-            QueryResult::Err(QueryError::Unknown)
+async fn fetch_user(keys: Vec<QueryKeys>) -> QueryResult<QueryValue, QueryError> {
+    if let Some(QueryKeys::User(id)) = keys.first() {
+        println!("Fetching user {id}");
+        sleep(Duration::from_millis(1000)).await;
+        match id {
+            0 => Ok(QueryValue::UserName("Marc".to_string())),
+            _ => Err(QueryError::UserNotFound(*id)),
         }
-    })
+        .into()
+    } else {
+        QueryResult::Err(QueryError::Unknown)
+    }
 }
 
 #[allow(non_snake_case)]
