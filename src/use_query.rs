@@ -59,10 +59,10 @@ pub struct QueryConfig<T, E, K> {
 }
 
 impl<T, E, K> QueryConfig<T, E, K> {
-    pub fn new<F, QF>(query_keys: Vec<K>, query_fn: F) -> Self
+    pub fn new<Q, F>(query_keys: Vec<K>, query_fn: Q) -> Self
     where
-        F: Fn(Vec<K>) -> QF + 'static,
-        QF: Future<Output = QueryResult<T, E>> + 'static,
+        Q: 'static + Fn(Vec<K>) -> F,
+        F: 'static + Future<Output = QueryResult<T, E>>,
     {
         Self {
             query_fn: Arc::new(Box::new(move |q| {
@@ -141,17 +141,17 @@ where
 /// ```no_run
 /// let users_query = use_query(cx, || vec![QueryKeys::User(id)], fetch_user);
 /// ```
-pub fn use_query<T, E, K, QF, F>(
+pub fn use_query<T, E, K, Q, F>(
     cx: &ScopeState,
     query_keys: impl FnOnce() -> Vec<K>,
-    query_fn: F,
+    query_fn: Q,
 ) -> &UseQuery<T, E, K>
 where
     T: 'static + PartialEq + Clone,
     E: 'static + PartialEq + Clone,
-    K: Clone + Eq + Hash + 'static,
-    F: Fn(Vec<K>) -> QF + 'static,
-    QF: Future<Output = QueryResult<T, E>> + 'static,
+    K: 'static + Eq + Hash + Clone,
+    Q: 'static + Fn(Vec<K>) -> F,
+    F: 'static + Future<Output = QueryResult<T, E>>,
 {
     use_query_config(cx, || QueryConfig::new(query_keys(), query_fn))
 }
