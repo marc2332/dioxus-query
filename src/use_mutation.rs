@@ -3,13 +3,13 @@ use dioxus_hooks::*;
 use futures_util::Future;
 use std::{fmt::Debug, rc::Rc, sync::Arc};
 
-pub type MutationFn<T, E, P> = dyn Fn(P) -> Box<dyn Future<Output =  MutationResult<T, E>>>;
+pub type MutationFn<T, E, A> = dyn Fn(A) -> Box<dyn Future<Output = MutationResult<T, E>>>;
 
 /// A query mutation.
 #[derive(Clone)]
-pub struct UseMutation<T, E, P> {
+pub struct UseMutation<T, E, A> {
     value: Rc<RefCell<MutationResult<T, E>>>,
-    mutation_fn: Arc<Box<MutationFn<T, E, P>>>,
+    mutation_fn: Arc<Box<MutationFn<T, E, A>>>,
     scheduler: Arc<dyn Fn(ScopeId)>,
     scope_id: ScopeId,
 }
@@ -118,16 +118,13 @@ impl<T, E> From<MutationResult<T, E>> for Option<T> {
 }
 
 /// Create mutation. See [UseMutation] on how to use it.
-pub fn use_mutation<T, E, P, F, MF>(
-    cx: &ScopeState,
-    mutation_fn: F,
-) -> &UseMutation<T, E, P>
+pub fn use_mutation<T, E, A, M, F>(cx: &ScopeState, mutation_fn: M) -> &UseMutation<T, E, A>
 where
     T: 'static + PartialEq,
     E: 'static + PartialEq,
-    P: 'static,
-    F: Fn(P) -> MF + 'static,
-    MF: Future<Output =MutationResult<T, E> >  + 'static
+    A: 'static,
+    M: Fn(A) -> F + 'static,
+    F: Future<Output = MutationResult<T, E>> + 'static,
 {
     cx.use_hook(|| UseMutation {
         value: Rc::new(RefCell::new(MutationResult::Pending)),

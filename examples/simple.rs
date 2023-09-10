@@ -48,9 +48,7 @@ async fn fetch_user(keys: Vec<QueryKeys>) -> QueryResult<QueryValue, QueryError>
     }
 }
 
-async fn update_user(
-    (id, _name): (usize, String),
-) -> MutationResult<MutationValue, QueryError> {
+async fn update_user((id, _name): (usize, String)) -> MutationResult<MutationValue, QueryError> {
     println!("Mutating user");
     sleep(Duration::from_millis(1000)).await;
     Ok(MutationValue::UserUpdated(id)).into()
