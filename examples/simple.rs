@@ -55,7 +55,7 @@ async fn update_user((id, _name): (usize, String)) -> MutationResult<MutationVal
 }
 
 #[allow(non_snake_case)]
-#[inline_props]
+#[component]
 fn User(cx: Scope, id: usize) -> Element {
     let value = use_query(cx, || vec![QueryKeys::User(*id)], fetch_user);
     let mutate = use_mutation(cx, update_user);
@@ -84,12 +84,7 @@ fn User(cx: Scope, id: usize) -> Element {
 fn app(cx: Scope) -> Element {
     let client = use_query_client::<QueryValue, QueryError, QueryKeys>(cx);
 
-    let refresh = move |_| {
-        to_owned![client];
-        cx.spawn(async move {
-            client.invalidate_query(QueryKeys::User(0)).await;
-        });
-    };
+    let refresh = move |_| client.invalidate_query(QueryKeys::User(0));
 
     render!(
         User { id: 0 }

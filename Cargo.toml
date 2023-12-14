@@ -12,12 +12,11 @@ keywords = ["dioxus", "async", "state", "synchronization"]
 categories = ["gui", "asynchronous"]
 
 [dependencies]
-dioxus-core = "0.4"
-dioxus-hooks = "0.4"
+dioxus = { version = "0.4", default-features = false, features = ["macro", "hooks"] }
 futures-util = "0.3.28"
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 
 [dev-dependencies]
-dioxus = "0.4"
+dioxus = { version = "0.4", default-features = true }
 dioxus-desktop = "0.4"
 tokio = { version = "1.29.1", features = ["time"] }

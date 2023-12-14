@@ -1,5 +1,4 @@
-use dioxus_core::*;
-use dioxus_hooks::*;
+use dioxus::prelude::*;
 use futures_util::Future;
 use std::{fmt::Debug, rc::Rc, sync::Arc};
 
