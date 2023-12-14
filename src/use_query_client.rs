@@ -193,7 +193,7 @@ where
     pub fn invalidate_query(&self, key_to_invalidate: K) {
         let queries_registry = self.queries_registry.clone();
         let scheduler = self.scheduler.clone();
-        dioxus::prelude::spawn(async move {
+        spawn(async move {
             Self::invalidate_queries_inner(queries_registry, scheduler, &[key_to_invalidate]).await;
         });
     }
@@ -204,7 +204,7 @@ where
         let queries_registry = self.queries_registry.clone();
         let scheduler = self.scheduler.clone();
         let keys_to_invalidate = keys_to_invalidate.to_vec();
-        dioxus::prelude::spawn(async move {
+        spawn(async move {
             Self::invalidate_queries_inner(queries_registry, scheduler, &keys_to_invalidate).await;
         });
     }

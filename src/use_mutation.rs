@@ -13,55 +13,111 @@ pub struct UseMutation<T, E, A> {
     scope_id: ScopeId,
 }
 
-impl<T: Clone, E: Clone, P> UseMutation<T, E, P> {
+impl<T, E, A> UseMutation<T, E, A>
+where
+    T: Clone,
+    E: Clone,
+{
     /// Get the current result from the query mutation.
     pub fn result(&self) -> Ref<'_, MutationResult<T, E>> {
         self.value.borrow()
     }
 
-    /// Call the mutation function with a set of arguments.
-    pub async fn mutate(&self, arg: P) -> Ref<'_, MutationResult<T, E>> {
-        let cached_value = self.value.borrow().clone().into();
+    async fn inner_mutate(
+        arg: A,
+        value: &Rc<RefCell<MutationResult<T, E>>>,
+        scheduler: &Arc<dyn Fn(ScopeId)>,
+        scope_id: ScopeId,
+        mutation_fn: &Arc<Box<MutationFn<T, E, A>>>,
+    ) {
+        let cached_value = value.borrow().clone().into();
 
         // Set state to loading and notify
-        *self.value.borrow_mut() = MutationResult::Loading(cached_value);
+        *value.borrow_mut() = MutationResult::Loading(cached_value);
 
         // TODO optimization: Check if the value was already loading
         // to decide to call the scheduler or not
-        (self.scheduler)(self.scope_id);
+        (scheduler)(scope_id);
 
         // Trigger the mutation function
-        let fut = (self.mutation_fn)(arg);
+        let fut = (mutation_fn)(arg);
         let fut = Box::into_pin(fut);
-        let value = fut.await;
+        let new_value = fut.await;
 
         // Set state to the new value and notify
-        *self.value.borrow_mut() = value;
+        *value.borrow_mut() = new_value;
 
         // TODO optimization: Check if the previous and new value are
         // different to decide to call the scheduler or not
-        (self.scheduler)(self.scope_id);
+        (scheduler)(scope_id);
+    }
 
-        self.value.borrow()
+    async fn inner_silent_mutate(
+        arg: A,
+        value: &Rc<RefCell<MutationResult<T, E>>>,
+        mutation_fn: &Arc<Box<MutationFn<T, E, A>>>,
+    ) {
+        let cached_value = value.borrow().clone().into();
+
+        // Set state to loading
+        *value.borrow_mut() = MutationResult::Loading(cached_value);
+
+        // Trigger the mutation function
+        let fut = (mutation_fn)(arg);
+        let fut = Box::into_pin(fut);
+        let new_value = fut.await;
+
+        // Set state to the new value
+        *value.borrow_mut() = new_value;
+    }
+
+    /// Call the mutation function with a set of arguments, in the **background**.
+    pub fn mutate(&self, arg: A)
+    where
+        T: 'static,
+        E: 'static,
+        A: 'static,
+    {
+        let value = self.value.clone();
+        let scheduler = self.scheduler.clone();
+        let scope_id = self.scope_id;
+        let mutation_fn = self.mutation_fn.clone();
+        spawn(
+            async move { Self::inner_mutate(arg, &value, &scheduler, scope_id, &mutation_fn).await },
+        );
+    }
+
+    /// Call the mutation function with a set of arguments.
+    pub async fn manual_mutate(&self, arg: A) {
+        Self::inner_mutate(
+            arg,
+            &self.value,
+            &self.scheduler,
+            self.scope_id,
+            &self.mutation_fn,
+        )
+        .await;
+    }
+
+    /// Call the mutation function silently with a set of arguments, in the **background**.
+    /// This will not make the component re run.
+    pub async fn mutate_silent(&self, arg: A)
+    where
+        T: 'static,
+        E: 'static,
+        A: 'static,
+    {
+        let value = self.value.clone();
+        let mutation_fn = self.mutation_fn.clone();
+        spawn(async move {
+            Self::inner_silent_mutate(arg, &value, &mutation_fn).await;
+        });
     }
 
     /// Call the mutation function silently with a set of arguments.
     /// This will not make the component re run.
-    pub async fn mutate_silent(&self, arg: P) -> Ref<'_, MutationResult<T, E>> {
-        let cached_value = self.value.borrow().clone().into();
-
-        // Set state to loading
-        *self.value.borrow_mut() = MutationResult::Loading(cached_value);
-
-        // Trigger the mutation function
-        let fut = (self.mutation_fn)(arg);
-        let fut = Box::into_pin(fut);
-        let value = fut.await;
-
-        // Set state to the new value
-        *self.value.borrow_mut() = value;
-
-        self.value.borrow()
+    pub async fn manual_mutate_silent(&self, arg: A) {
+        Self::inner_silent_mutate(arg, &self.value, &self.mutation_fn).await;
     }
 }
 

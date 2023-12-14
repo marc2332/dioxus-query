@@ -61,10 +61,7 @@ fn User(cx: Scope, id: usize) -> Element {
     let mutate = use_mutation(cx, update_user);
 
     let onclick = |_| {
-        to_owned![mutate];
-        cx.spawn(async move {
-            mutate.mutate((0, "Not Marc".to_string())).await;
-        });
+        mutate.mutate((0, "Not Marc".to_string()));
     };
 
     println!("Showing user {id}");
@@ -82,6 +79,7 @@ fn User(cx: Scope, id: usize) -> Element {
 }
 
 fn app(cx: Scope) -> Element {
+    use_init_query_client::<QueryValue, QueryError, QueryKeys>(cx);
     let client = use_query_client::<QueryValue, QueryError, QueryKeys>(cx);
 
     let refresh = move |_| client.invalidate_query(QueryKeys::User(0));

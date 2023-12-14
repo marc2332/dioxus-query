@@ -69,13 +69,11 @@ fn User(cx: Scope, id: usize) -> Element {
 }
 
 fn app(cx: Scope) -> Element {
+     use_init_query_client::<QueryValue, QueryError, QueryKeys>(cx);
     let client = use_query_client::<QueryValue, QueryError, QueryKeys>(cx);
 
-    let refresh = move |_| {
-        to_owned![client];
-        cx.spawn(async move {
-            client.invalidate_query(QueryKeys::User(0)).await;
-        });
+    let refresh = |_| {
+         client.invalidate_query(QueryKeys::User(0));
     };
 
     render!(
