@@ -40,7 +40,7 @@ async fn fetch_user(keys: Vec<QueryKeys>) -> QueryResult<QueryValue, ()> {
 }
 
 #[allow(non_snake_case)]
-#[inline_props]
+#[component]
 fn User(cx: Scope, id: usize) -> Element {
     let value = use_query(
         cx,
@@ -54,7 +54,7 @@ fn User(cx: Scope, id: usize) -> Element {
 }
 
 #[allow(non_snake_case)]
-#[inline_props]
+#[component]
 fn AnotherUser(cx: Scope, id: usize) -> Element {
     let value = use_query_config(cx, || {
         QueryConfig::new(vec![QueryKeys::User(*id), QueryKeys::Users], fetch_user)
@@ -67,34 +67,16 @@ fn AnotherUser(cx: Scope, id: usize) -> Element {
 }
 
 fn app(cx: Scope) -> Element {
+    use_init_query_client::<QueryValue, (), QueryKeys>(cx);
     let client = use_query_client::<QueryValue, (), QueryKeys>(cx);
 
-    let refresh_0 = {
-        to_owned![client];
-        move |_| {
-            to_owned![client];
-            cx.spawn(async move {
-                client.invalidate_query(QueryKeys::User(0)).await;
-            });
-        }
+    let refresh_0 = |_| {
+        client.invalidate_query(QueryKeys::User(0));
     };
 
-    let refresh_1 = {
-        to_owned![client];
-        move |_| {
-            to_owned![client];
-            cx.spawn(async move {
-                client.invalidate_queries(&[QueryKeys::User(1)]).await;
-            });
-        }
-    };
+    let refresh_1 = |_| client.invalidate_queries(&[QueryKeys::User(1)]);
 
-    let refresh_all = move |_| {
-        to_owned![client];
-        cx.spawn(async move {
-            client.invalidate_query(QueryKeys::Users).await;
-        });
-    };
+    let refresh_all = |_| client.invalidate_query(QueryKeys::Users);
 
     render!(
         User { id: 0 }

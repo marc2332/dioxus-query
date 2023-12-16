@@ -1,5 +1,4 @@
-use dioxus_core::*;
-use dioxus_hooks::*;
+use dioxus::prelude::*;
 use futures_util::{
     stream::{FuturesUnordered, StreamExt},
     Future,
@@ -15,21 +14,26 @@ use std::{
 
 use crate::{cached_result::CachedResult, result::QueryResult};
 
-/// Get access to the [UseQueryClient].
-pub fn use_query_client<T, E, K>(cx: &ScopeState) -> UseQueryClient<T, E, K>
+pub fn use_init_query_client<T, E, K>(cx: &ScopeState) -> &UseQueryClient<T, E, K>
 where
     T: 'static + Clone,
     E: 'static + Clone,
     K: 'static + Clone,
 {
-    if let Some(client) = cx.consume_context() {
-        client
-    } else {
-        cx.provide_root_context(UseQueryClient {
-            queries_registry: Rc::default(),
-            scheduler: cx.schedule_update_any(),
-        })
-    }
+    use_context_provider(cx, || UseQueryClient {
+        queries_registry: Rc::default(),
+        scheduler: cx.schedule_update_any(),
+    })
+}
+
+/// Get access to the [UseQueryClient].
+pub fn use_query_client<T, E, K>(cx: &ScopeState) -> &UseQueryClient<T, E, K>
+where
+    T: 'static + Clone,
+    E: 'static + Clone,
+    K: 'static + Clone,
+{
+    use_context(cx).unwrap()
 }
 
 pub(crate) type QueryFn<T, E, K> = dyn Fn(Vec<K>) -> Box<dyn Future<Output = QueryResult<T, E>>>;
@@ -124,7 +128,11 @@ where
         }
     }
 
-    pub(crate) async fn invalidate_queries_inner(&self, keys_to_invalidate: &[K]) {
+    pub(crate) async fn invalidate_queries_inner(
+        queries_registry: Rc<RefCell<QueriesRegistry<T, E, K>>>,
+        scheduler: Arc<dyn Fn(ScopeId)>,
+        keys_to_invalidate: &[K],
+    ) {
         let tasks = FuturesUnordered::new();
         for (
             RegistryEntry { query_keys, .. },
@@ -133,7 +141,7 @@ where
                 listeners,
                 query_fn,
             },
-        ) in self.queries_registry.borrow().iter()
+        ) in queries_registry.borrow().iter()
         {
             let mut query_listeners = HashSet::<ScopeId>::default();
 
@@ -154,11 +162,10 @@ where
                     has_been_queried: true,
                 };
                 for listener in &query_listeners {
-                    (self.scheduler)(*listener);
+                    (scheduler)(*listener);
                 }
 
-                let scheduler = self.scheduler.clone();
-                to_owned![query_fn, query_keys, query_listeners, value];
+                to_owned![query_fn, query_keys, query_listeners, value, scheduler];
 
                 tasks.push(Box::pin(async move {
                     // Fetch the result
@@ -183,13 +190,22 @@ where
 
     /// Invalidate a single query.
     /// It will run alone, after previous queries have finished.
-    pub async fn invalidate_query(&self, key_to_invalidate: K) {
-        self.invalidate_queries_inner(&[key_to_invalidate]).await;
+    pub fn invalidate_query(&self, key_to_invalidate: K) {
+        let queries_registry = self.queries_registry.clone();
+        let scheduler = self.scheduler.clone();
+        spawn(async move {
+            Self::invalidate_queries_inner(queries_registry, scheduler, &[key_to_invalidate]).await;
+        });
     }
 
     /// Invalidate a group of queries.
     /// They will all run concurrently, after previous queries have finished.
-    pub async fn invalidate_queries(&self, keys_to_invalidate: &[K]) {
-        self.invalidate_queries_inner(keys_to_invalidate).await;
+    pub fn invalidate_queries(&self, keys_to_invalidate: &[K]) {
+        let queries_registry = self.queries_registry.clone();
+        let scheduler = self.scheduler.clone();
+        let keys_to_invalidate = keys_to_invalidate.to_vec();
+        spawn(async move {
+            Self::invalidate_queries_inner(queries_registry, scheduler, &keys_to_invalidate).await;
+        });
     }
 }
