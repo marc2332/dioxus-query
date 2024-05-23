@@ -10,13 +10,13 @@ use tokio::time::sleep;
 use dioxus::prelude::*;
 
 fn main() {
-    dioxus_desktop::launch(app);
+    launch(app);
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Debug)]
 enum MutationError {}
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Debug)]
 enum MutationValue {
     UserUpdated(usize),
 }
@@ -29,18 +29,19 @@ async fn update_user((id, _name): (usize, String)) -> MutationResult<MutationVal
 
 #[allow(non_snake_case)]
 #[component]
-fn User(cx: Scope, id: usize) -> Element {
-    let mutate = use_mutation(cx, update_user);
+fn User(id: usize) -> Element {
+    let mutate = use_mutation(update_user);
 
-    let onclick = |_| {
+    let onclick = move |_| {
         mutate.mutate((0, "Not Marc".to_string()));
     };
 
     println!("Showing user {id}");
 
-    render!(
+    rsx!(
         p { "{*mutate.result():?}" }
-        button { onclick: onclick,
+        button {
+            onclick,
             if mutate.result().is_loading() {
               "Loading..."
            } else {
@@ -50,8 +51,8 @@ fn User(cx: Scope, id: usize) -> Element {
     )
 }
 
-fn app(cx: Scope) -> Element {
-    render!(
+fn app() -> Element {
+    rsx!(
         User { id: 0 }
         User { id: 0 }
         User { id: 0 }

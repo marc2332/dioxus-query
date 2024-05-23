@@ -44,6 +44,12 @@ impl<T, E> CachedResult<T, E> {
     pub(crate) fn has_been_queried(&self) -> bool {
         self.has_been_queried
     }
+
+    pub(crate) fn set_to_loading(&mut self) {
+        self.value.set_loading();
+        self.instant = Some(Instant::now());
+        self.has_been_queried = true;
+    }
 }
 
 impl<T, E> Deref for CachedResult<T, E> {

@@ -35,26 +35,25 @@
 //!
 //! #[allow(non_snake_case)]
 //! #[inline_props]
-//! fn User(cx: Scope, id: usize) -> Element {
-//!    let value = use_query(cx, || vec![QueryKeys::User(*id)], fetch_user);
+//! fn User(id: usize) -> Element {
+//!    let value = use_query(|| vec![QueryKeys::User(id)], fetch_user);
 //!
 //!     render!( p { "{value.result().value():?}" } )
 //! }
 //!
 //!
-//! fn app(cx: Scope) -> Element {
-//!     let client = use_query_client::<QueryValue, QueryError, QueryKeys>(cx);
+//! fn app() -> Element {
+//!     let client = use_query_client::<QueryValue, QueryError, QueryKeys>();
 //!
-//!     let refresh = move |_| {
-//!         to_owned![client];
-//!         cx.spawn(async move {
+//!     let onclick = move |_| {
+//!         spawn(async move {
 //!             client.invalidate_query(QueryKeys::User(0)).await;
 //!         });
 //!     };
 //!
-//!     render!(
+//!     rsx!(
 //!         User { id: 0 }
-//!         button { onclick: refresh, label { "Refresh" } }
+//!         button { onclick, label { "Refresh" } }
 //!     )
 //! }
 //! ```

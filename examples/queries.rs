@@ -10,7 +10,7 @@ use tokio::time::sleep;
 use dioxus::prelude::*;
 
 fn main() {
-    dioxus_desktop::launch(app);
+    launch(app);
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -18,13 +18,14 @@ enum QueryKeys {
     User(usize),
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+
+#[derive(PartialEq, Debug)]
 enum QueryError {
     UserNotFound(usize),
     Unknown,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Debug)]
 enum QueryValue {
     UserName(String),
     UserAge(u8),
@@ -60,25 +61,25 @@ async fn fetch_user_age(keys: Vec<QueryKeys>) -> QueryResult<QueryValue, QueryEr
 
 #[allow(non_snake_case)]
 #[component]
-fn User(cx: Scope, id: usize) -> Element {
-    let user_name = use_query(cx, move || vec![QueryKeys::User(*id)], fetch_user);
-    let user_age = use_query(cx, move || vec![QueryKeys::User(*id)], fetch_user_age);
+fn User(id: usize) -> Element {
+    let user_name = use_simple_query([QueryKeys::User(id)], fetch_user);
+    let user_age = use_simple_query([QueryKeys::User(id)], fetch_user_age);
 
     println!("Showing user {id}");
 
-    render!(
+    rsx!(
         p { "{user_name.result().value():?}" }
         p { "{user_age.result().value():?}" }
     )
 }
 
-fn app(cx: Scope) -> Element {
-    use_init_query_client::<QueryValue, QueryError, QueryKeys>(cx);
-    let client = use_query_client::<QueryValue, QueryError, QueryKeys>(cx);
+fn app() -> Element {
+    use_init_query_client::<QueryValue, QueryError, QueryKeys>();
+    let client = use_query_client::<QueryValue, QueryError, QueryKeys>();
 
-    let refresh = |_| client.invalidate_query(QueryKeys::User(0));
+    let refresh = move |_| client.invalidate_query(QueryKeys::User(0));
 
-    render!(
+    rsx!(
         User { id: 0 }
         User { id: 0 }
         button { onclick: refresh, label { "Refresh" } }

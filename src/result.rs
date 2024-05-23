@@ -1,3 +1,5 @@
+use std::mem;
+
 use crate::cached_result::CachedResult;
 
 /// The result of a query.
@@ -22,6 +24,13 @@ impl<T, E> QueryResult<T, E> {
 
     pub fn is_loading(&self) -> bool {
         matches!(self, QueryResult::Loading(..))
+    }
+
+    pub fn set_loading(&mut self) {
+        let result = mem::replace(self, Self::Loading(None));
+        if let Self::Ok(v) = result {
+            *self = Self::Loading(Some(v))
+        }
     }
 }
 

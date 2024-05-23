@@ -2,7 +2,7 @@
 
 # dioxus-query 🦀⚡
 
-**Fully-typed, async, reusable state management and synchronization** for [Dioxus 🧬](https://dioxuslabs.com/). Inspired by [`TanStack Query`](https://tanstack.com/query/latest/docs/react/overview). 
+**Fully-typed, async, reusable cached state management** for [Dioxus 🧬](https://dioxuslabs.com/). Inspired by [`TanStack Query`](https://tanstack.com/query/latest/docs/react/overview). 
 
 See the [Docs](https://docs.rs/dioxus-query/latest/dioxus_query/) or join the [Discord](https://discord.gg/gwuU8vGRPr). 
 
@@ -10,7 +10,7 @@ See the [Docs](https://docs.rs/dioxus-query/latest/dioxus_query/) or join the [D
 
 ## Support
 
-- **Dioxus v0.4** 🧬
+- **Dioxus v0.5** 🧬
 - All renderers ([web](https://dioxuslabs.com/learn/0.4/getting_started/wasm), [desktop](https://dioxuslabs.com/learn/0.4/getting_started/desktop), [freya](https://github.com/marc2332/freya), etc)
 - Both WASM and native targets
 
@@ -35,13 +35,13 @@ enum QueryKeys {
     User(usize),
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Debug)]
 enum QueryError {
     UserNotFound(usize),
     Unknown
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Debug)]
 enum QueryValue {
     UserName(String),
 }
@@ -62,23 +62,23 @@ async fn fetch_user(keys: Vec<QueryKeys>) -> QueryResult<QueryValue, QueryError>
 
 #[allow(non_snake_case)]
 #[inline_props]
-fn User(cx: Scope, id: usize) -> Element {
-   let value = use_query(cx, || vec![QueryKeys::User(*id)], fetch_user);
+fn User(id: usize) -> Element {
+   let value = use_simple_query([QueryKeys::User(id)], fetch_user);
 
     render!( p { "{value.result().value():?}" } )
 }
 
-fn app(cx: Scope) -> Element {
-     use_init_query_client::<QueryValue, QueryError, QueryKeys>(cx);
-    let client = use_query_client::<QueryValue, QueryError, QueryKeys>(cx);
+fn app() -> Element {
+    use_init_query_client::<QueryValue, QueryError, QueryKeys>();
+    let client = use_query_client::<QueryValue, QueryError, QueryKeys>();
 
-    let refresh = |_| {
+    let onclick = move |_| {
          client.invalidate_query(QueryKeys::User(0));
     };
 
     render!(
         User { id: 0 }
-        button { onclick: refresh, label { "Refresh" } }
+        button { onclick, label { "Refresh" } }
     )
 }
 ```
