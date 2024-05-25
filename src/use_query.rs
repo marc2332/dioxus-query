@@ -88,7 +88,7 @@ pub struct Query<T, E, K> {
 }
 
 impl<T, E, K> Query<T, E, K> {
-    pub fn new<Q, F, const N: usize>(query_keys: [K; N], query_fn: Q) -> Self
+    pub fn new<Q, F>(query_fn: Q) -> Self
     where
         Q: 'static + Fn(Vec<K>) -> F,
         F: 'static + Future<Output = QueryResult<T, E>>,
@@ -101,7 +101,7 @@ impl<T, E, K> Query<T, E, K> {
             })),
             initial_value: None,
             registry_entry: RegistryEntry {
-                query_keys: query_keys.to_vec(),
+                query_keys: Vec::new(),
                 query_fn_id: TypeId::of::<F>(),
             },
         }
@@ -116,15 +116,16 @@ impl<T, E, K> Query<T, E, K> {
 
 /// Register a query listener with the given query configuration.
 /// See [UseQuery] on how to use it.
-pub fn use_query<T, E, K>(query: impl FnOnce() -> Query<T, E, K>) -> UseQuery<T, E, K>
+pub fn use_query<T, E, K, const N: usize>(query_keys: [K; N], query: impl FnOnce() -> Query<T, E, K>) -> UseQuery<T, E, K>
 where
     T: 'static + PartialEq,
     E: 'static,
     K: 'static + Eq + Hash + Clone,
 {
     let client = use_query_client();
-    use_hook(|| {
-        let query = query();
+    let mut used_query = use_hook(|| {
+        let mut query = query();
+        query.registry_entry.query_keys = query_keys.to_vec();
         let registry_entry = query.registry_entry;
         let mut queries_registry = client.queries_registry.write_unchecked();
 
@@ -165,7 +166,48 @@ where
                 scope_id: current_scope_id().unwrap(),
             }),
         }
-    })
+    });
+
+    // Query keys have changed
+    let used_entry = used_query.cleaner.peek().registry_entry.clone();
+
+    if used_entry.query_keys != query_keys {
+        let mut queries_registry = client.queries_registry.write_unchecked();
+
+        // Remove the old entry
+        let old_value = queries_registry.get(&used_entry).unwrap().clone();
+
+        let new_entry  = RegistryEntry {
+            query_keys: query_keys.to_vec(),
+            ..used_entry
+        };
+
+        // Create a group of listeners for the given [RegistryEntry] key.
+        let query_listeners =
+            queries_registry
+                .entry(new_entry.clone())
+                .or_insert(QueryListeners {
+                    listeners: HashSet::default(),
+                    value: old_value.value,
+                    query_fn: old_value.query_fn,
+                });
+
+        // Register this listener's scope
+        query_listeners
+            .listeners
+            .insert(current_scope_id().unwrap());
+
+        let _ = drop(queries_registry);
+
+        // Replace the query cleaner with the a new entry
+        *used_query.cleaner.write() = UseQueryCleaner {
+            client,
+            registry_entry: new_entry,
+            scope_id: current_scope_id().unwrap(),
+        };
+    }
+
+    used_query
 }
 
 /// Register a query listener with the given combination of **query keys** and **query function**.
@@ -187,5 +229,5 @@ where
     Q: 'static + Fn(Vec<K>) -> F,
     F: 'static + Future<Output = QueryResult<T, E>>,
 {
-    use_query(|| Query::new(query_keys, query_fn))
+    use_query(query_keys, || Query::new(query_fn))
 }
