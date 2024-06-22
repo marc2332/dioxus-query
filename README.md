@@ -61,11 +61,11 @@ async fn fetch_user(keys: Vec<QueryKey>) -> QueryResult<QueryValue, QueryError> 
 }
 
 #[allow(non_snake_case)]
-#[inline_props]
+#[component]
 fn User(id: usize) -> Element {
    let value = use_get_query([QueryKey::User(id)], fetch_user);
 
-    render!( p { "{value.result().value():?}" } )
+    rsx!( p { "{value.result().value():?}" } )
 }
 
 fn app() -> Element {
@@ -76,7 +76,7 @@ fn app() -> Element {
          client.invalidate_query(QueryKey::User(0));
     };
 
-    render!(
+    rsx!(
         User { id: 0 }
         button { onclick, label { "Refresh" } }
     )

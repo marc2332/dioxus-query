@@ -34,11 +34,11 @@
 //! }
 //!
 //! #[allow(non_snake_case)]
-//! #[inline_props]
+//! #[component]
 //! fn User(id: usize) -> Element {
 //!    let value = use_get_query(QueryKey::User(id)], fetch_user);
 //!
-//!     render!( p { "{value.result().value():?}" } )
+//!     rsx!( p { "{value.result().value():?}" } )
 //! }
 //!
 //!
@@ -46,9 +46,7 @@
 //!     let client = use_query_client::<QueryValue, QueryError, QueryKey>();
 //!
 //!     let onclick = move |_| {
-//!         spawn(async move {
-//!             client.invalidate_query(QueryKey::User(0)).await;
-//!         });
+//!         client.invalidate_query(QueryKey::User(0));
 //!     };
 //!
 //!     rsx!(
