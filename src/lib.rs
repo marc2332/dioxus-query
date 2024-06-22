@@ -36,7 +36,7 @@
 //! #[allow(non_snake_case)]
 //! #[inline_props]
 //! fn User(id: usize) -> Element {
-//!    let value = use_query(|| vec![QueryKeys::User(id)], fetch_user);
+//!    let value = use_simple_query(QueryKeys::User(id)], fetch_user);
 //!
 //!     render!( p { "{value.result().value():?}" } )
 //! }

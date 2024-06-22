@@ -18,7 +18,6 @@ enum QueryKeys {
     User(usize),
 }
 
-
 #[derive(PartialEq, Debug)]
 enum QueryError {
     UserNotFound(usize),

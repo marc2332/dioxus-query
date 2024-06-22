@@ -52,10 +52,10 @@ fn User(id: usize) -> Element {
 #[allow(non_snake_case)]
 #[component]
 fn AnotherUser(id: usize) -> Element {
-    let value = use_query(|| {
+    let value = use_query([QueryKeys::User(id), QueryKeys::Users], || {
         let initial = QueryValue::UserName("Jonathan while loading".to_string()).into();
 
-        Query::new([QueryKeys::User(id), QueryKeys::Users], fetch_user).initial(initial)
+        Query::new(fetch_user).initial(initial)
     });
 
     println!("Showing another user {id}");
