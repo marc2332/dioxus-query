@@ -116,7 +116,10 @@ impl<T, E, K> Query<T, E, K> {
 
 /// Register a query listener with the given query configuration.
 /// See [UseQuery] on how to use it.
-pub fn use_query<T, E, K, const N: usize>(query_keys: [K; N], query: impl FnOnce() -> Query<T, E, K>) -> UseQuery<T, E, K>
+pub fn use_query<T, E, K, const N: usize>(
+    query_keys: [K; N],
+    query: impl FnOnce() -> Query<T, E, K>,
+) -> UseQuery<T, E, K>
 where
     T: 'static + PartialEq,
     E: 'static,
@@ -177,20 +180,19 @@ where
         // Remove the old entry
         let old_value = queries_registry.get(&used_entry).unwrap().clone();
 
-        let new_entry  = RegistryEntry {
+        let new_entry = RegistryEntry {
             query_keys: query_keys.to_vec(),
             ..used_entry
         };
 
         // Create a group of listeners for the given [RegistryEntry] key.
-        let query_listeners =
-            queries_registry
-                .entry(new_entry.clone())
-                .or_insert(QueryListeners {
-                    listeners: HashSet::default(),
-                    value: old_value.value,
-                    query_fn: old_value.query_fn,
-                });
+        let query_listeners = queries_registry
+            .entry(new_entry.clone())
+            .or_insert(QueryListeners {
+                listeners: HashSet::default(),
+                value: old_value.value,
+                query_fn: old_value.query_fn,
+            });
 
         // Register this listener's scope
         query_listeners
