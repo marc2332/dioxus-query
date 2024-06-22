@@ -126,90 +126,104 @@ where
     K: 'static + Eq + Hash + Clone,
 {
     let client = use_query_client();
-    let mut used_query = use_hook(|| {
-        let mut query = query();
-        query.registry_entry.query_keys = query_keys.to_vec();
-        let registry_entry = query.registry_entry;
-        let mut queries_registry = client.queries_registry.write_unchecked();
-
-        // Create a group of listeners for the given [RegistryEntry] key.
-        let query_listeners =
-            queries_registry
-                .entry(registry_entry.clone())
-                .or_insert(QueryListeners {
-                    listeners: HashSet::default(),
-                    value: QueryValue::new(RwLock::new(CachedResult::new(
-                        query.initial_value.unwrap_or_default(),
-                    ))),
-                    query_fn: query.query_fn,
-                });
-
-        // Register this listener's scope
-        query_listeners
-            .listeners
-            .insert(current_scope_id().unwrap());
-
-        let value = query_listeners.value.clone();
-
-        // Asynchronously initialize the query value
-        spawn({
-            to_owned![registry_entry];
-            async move {
-                client.run_new_query(&registry_entry).await;
+    use_memo_with_old_value(
+        query_keys.clone(),
+        |prev_query: Option<UseQuery<T, E, K>>| {
+            // If there is an previous query it means they query keys have changed.
+            if let Some(prev_query) = prev_query {
+                let prev_entry = &prev_query.cleaner.peek().registry_entry;
+                let mut queries_registry = client.queries_registry.write_unchecked();
+                // Remove the entry from the previous query
+                queries_registry.remove(&prev_entry).unwrap();
             }
-        });
 
-        UseQuery {
-            client,
-            value,
-            scope_id: current_scope_id().unwrap(),
-            cleaner: Signal::new(UseQueryCleaner {
-                client,
-                registry_entry,
-                scope_id: current_scope_id().unwrap(),
-            }),
-        }
-    });
+            let mut query = query();
+            query.registry_entry.query_keys = query_keys.to_vec();
 
-    // Query keys have changed
-    let used_entry = used_query.cleaner.peek().registry_entry.clone();
+            let registry_entry = query.registry_entry;
+            let mut queries_registry = client.queries_registry.write_unchecked();
 
-    if used_entry.query_keys != query_keys {
-        let mut queries_registry = client.queries_registry.write_unchecked();
+            // Create a group of listeners for the given [RegistryEntry] key.
+            let query_listeners =
+                queries_registry
+                    .entry(registry_entry.clone())
+                    .or_insert(QueryListeners {
+                        listeners: HashSet::default(),
+                        value: QueryValue::new(RwLock::new(CachedResult::new(
+                            query.initial_value.unwrap_or_default(),
+                        ))),
+                        query_fn: query.query_fn,
+                    });
 
-        // Remove the old entry
-        let old_value = queries_registry.get(&used_entry).unwrap().clone();
+            // Register this listener's scope
+            query_listeners
+                .listeners
+                .insert(current_scope_id().unwrap());
 
-        let new_entry = RegistryEntry {
-            query_keys: query_keys.to_vec(),
-            ..used_entry
-        };
+            let value = query_listeners.value.clone();
 
-        // Create a group of listeners for the given [RegistryEntry] key.
-        let query_listeners = queries_registry
-            .entry(new_entry.clone())
-            .or_insert(QueryListeners {
-                listeners: HashSet::default(),
-                value: old_value.value,
-                query_fn: old_value.query_fn,
+            // Asynchronously initialize the query value
+            spawn({
+                to_owned![registry_entry];
+                async move {
+                    client.run_new_query(&registry_entry).await;
+                }
             });
 
-        // Register this listener's scope
-        query_listeners
-            .listeners
-            .insert(current_scope_id().unwrap());
+            UseQuery {
+                client,
+                value,
+                scope_id: current_scope_id().unwrap(),
+                cleaner: Signal::new(UseQueryCleaner {
+                    client,
+                    registry_entry,
+                    scope_id: current_scope_id().unwrap(),
+                }),
+            }
+        },
+    )
+}
 
-        let _ = drop(queries_registry);
+/// Alternative to [use_memo]
+/// Benefits:
+/// - No unnecessary rerenders
+/// - Access to the previous value when dependencies change
+/// Downsides:
+/// - T needs to be Clone (cannot be avoided)
+fn use_memo_with_old_value<T: 'static + Clone, D: PartialEq + 'static>(
+    deps: D,
+    init: impl FnOnce(Option<T>) -> T,
+) -> T {
+    struct Memoized<T, D> {
+        value: T,
+        deps: D,
+    }
+    let mut value = use_signal::<Option<Memoized<T, D>>>(|| None);
+    let mut memoized_value = value.write();
 
-        // Replace the query cleaner with the a new entry
-        *used_query.cleaner.write() = UseQueryCleaner {
-            client,
-            registry_entry: new_entry,
-            scope_id: current_scope_id().unwrap(),
+    let deps_have_changed = memoized_value
+        .as_ref()
+        .map(|memoized_value| &memoized_value.deps)
+        != Some(&deps);
+
+    let new_value = if deps_have_changed {
+        let prev_value = memoized_value
+            .take()
+            .map(|memoized_value| memoized_value.value);
+        Some(init(prev_value))
+    } else {
+        None
+    };
+
+    if let Some(new_value) = new_value {
+        let new_memoized_value = Memoized {
+            value: new_value,
+            deps,
         };
+        *memoized_value = Some(new_memoized_value);
     }
 
-    used_query
+    memoized_value.as_ref().unwrap().value.clone()
 }
 
 /// Register a query listener with the given combination of **query keys** and **query function**.
