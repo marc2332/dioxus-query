@@ -10,16 +10,16 @@ use tokio::time::sleep;
 use dioxus::prelude::*;
 
 fn main() {
-    dioxus_desktop::launch(app);
+    launch(app);
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 enum QueryKeys {
     User(usize),
     Users,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Debug)]
 enum QueryValue {
     UserName(String),
 }
@@ -41,44 +41,41 @@ async fn fetch_user(keys: Vec<QueryKeys>) -> QueryResult<QueryValue, ()> {
 
 #[allow(non_snake_case)]
 #[component]
-fn User(cx: Scope, id: usize) -> Element {
-    let value = use_query(
-        cx,
-        || vec![QueryKeys::User(*id), QueryKeys::Users],
-        fetch_user,
-    );
+fn User(id: usize) -> Element {
+    let value = use_simple_query([QueryKeys::User(id), QueryKeys::Users], fetch_user);
 
     println!("Showing user {id}");
 
-    render!( p { "{value.result().value():?}" } )
+    rsx!( p { "{value.result().value():?}" } )
 }
 
 #[allow(non_snake_case)]
 #[component]
-fn AnotherUser(cx: Scope, id: usize) -> Element {
-    let value = use_query_config(cx, || {
-        QueryConfig::new(vec![QueryKeys::User(*id), QueryKeys::Users], fetch_user)
-            .initial(QueryValue::UserName("Jonathan while loading".to_string()).into())
+fn AnotherUser(id: usize) -> Element {
+    let value = use_query(|| {
+        let initial = QueryValue::UserName("Jonathan while loading".to_string()).into();
+
+        Query::new([QueryKeys::User(id), QueryKeys::Users], fetch_user).initial(initial)
     });
 
     println!("Showing another user {id}");
 
-    render!( p { "{value.result().value():?}" } )
+    rsx!( p { "{value.result().value():?}" } )
 }
 
-fn app(cx: Scope) -> Element {
-    use_init_query_client::<QueryValue, (), QueryKeys>(cx);
-    let client = use_query_client::<QueryValue, (), QueryKeys>(cx);
+fn app() -> Element {
+    use_init_query_client::<QueryValue, (), QueryKeys>();
+    let client = use_query_client::<QueryValue, (), QueryKeys>();
 
-    let refresh_0 = |_| {
+    let refresh_0 = move |_| {
         client.invalidate_query(QueryKeys::User(0));
     };
 
-    let refresh_1 = |_| client.invalidate_queries(&[QueryKeys::User(1)]);
+    let refresh_1 = move |_| client.invalidate_queries(&[QueryKeys::User(1)]);
 
-    let refresh_all = |_| client.invalidate_query(QueryKeys::Users);
+    let refresh_all = move |_| client.invalidate_query(QueryKeys::Users);
 
-    render!(
+    rsx!(
         User { id: 0 }
         AnotherUser { id: 1 }
         button { onclick: refresh_0, label { "Refresh 0" } }
