@@ -85,17 +85,16 @@ fn app() -> Element {
 
 ## Features
 - [x] Renderer-agnostic
-- [x] Typed Query keys, errors and results
-- [x] Manual query/queries invalidation
-- [ ] Automatic/smart query invalidation
-- [ ] Query aborting
-- [x] Global Query + Function caching
-- [x] Concurrent queries and mutations
+- [x] Queries and mutations
+- [x] Typed Mutations, Query keys, Errors and Values
+- [x] Invalidate queries manually
+- [x] Invalidate queries when keys change
+- [x] Concurrent and batching of queries
+- [x] Concurrent mutations
 
 ## To Do
 - Tests
 - Documentation
 - Real-world examples
-- Clean up code
 
 MIT License
