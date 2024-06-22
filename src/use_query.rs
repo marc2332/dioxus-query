@@ -134,7 +134,7 @@ where
                 let prev_entry = &prev_query.cleaner.peek().registry_entry;
                 let mut queries_registry = client.queries_registry.write_unchecked();
                 // Remove the entry from the previous query
-                queries_registry.remove(&prev_entry).unwrap();
+                queries_registry.remove(prev_entry).unwrap();
             }
 
             let mut query = query();
