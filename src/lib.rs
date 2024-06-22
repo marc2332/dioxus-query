@@ -4,7 +4,7 @@
 //!
 //! ```rust
 //! #[derive(Clone, PartialEq, Eq, Hash)]
-//! enum QueryKeys {
+//! enum QueryKey {
 //!     User(usize),
 //! }
 //!
@@ -19,8 +19,8 @@
 //!     UserName(String),
 //! }
 //!
-//! async fn fetch_user(keys: Vec<QueryKeys>) -> QueryResult<QueryValue, QueryError> {
-//!     if let Some(QueryKeys::User(id)) = keys.first() {
+//! async fn fetch_user(keys: Vec<QueryKey>) -> QueryResult<QueryValue, QueryError> {
+//!     if let Some(QueryKey::User(id)) = keys.first() {
 //!         println!("Fetching user {id}");
 //!         sleep(Duration::from_millis(1000)).await;
 //!         match id {
@@ -36,18 +36,18 @@
 //! #[allow(non_snake_case)]
 //! #[inline_props]
 //! fn User(id: usize) -> Element {
-//!    let value = use_simple_query(QueryKeys::User(id)], fetch_user);
+//!    let value = use_simple_query(QueryKey::User(id)], fetch_user);
 //!
 //!     render!( p { "{value.result().value():?}" } )
 //! }
 //!
 //!
 //! fn app() -> Element {
-//!     let client = use_query_client::<QueryValue, QueryError, QueryKeys>();
+//!     let client = use_query_client::<QueryValue, QueryError, QueryKey>();
 //!
 //!     let onclick = move |_| {
 //!         spawn(async move {
-//!             client.invalidate_query(QueryKeys::User(0)).await;
+//!             client.invalidate_query(QueryKey::User(0)).await;
 //!         });
 //!     };
 //!

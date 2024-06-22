@@ -232,7 +232,7 @@ fn use_memo_with_old_value<T: 'static + Clone, D: PartialEq + 'static>(
 /// ## Example:
 ///
 /// ```no_run
-/// let users_query = use_simple_query([QueryKeys::User(id)], fetch_user);
+/// let users_query = use_simple_query([QueryKey::User(id)], fetch_user);
 /// ```
 pub fn use_simple_query<T, E, K, Q, F, const N: usize>(
     query_keys: [K; N],

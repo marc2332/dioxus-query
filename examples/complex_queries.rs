@@ -14,7 +14,7 @@ fn main() {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-enum QueryKeys {
+enum QueryKey {
     User(usize),
     Users,
 }
@@ -24,8 +24,8 @@ enum QueryValue {
     UserName(String),
 }
 
-async fn fetch_user(keys: Vec<QueryKeys>) -> QueryResult<QueryValue, ()> {
-    if let Some(QueryKeys::User(id)) = keys.first() {
+async fn fetch_user(keys: Vec<QueryKey>) -> QueryResult<QueryValue, ()> {
+    if let Some(QueryKey::User(id)) = keys.first() {
         println!("Fetching user {id}");
         sleep(Duration::from_millis(1000)).await;
         match id {
@@ -42,7 +42,7 @@ async fn fetch_user(keys: Vec<QueryKeys>) -> QueryResult<QueryValue, ()> {
 #[allow(non_snake_case)]
 #[component]
 fn User(id: usize) -> Element {
-    let value = use_simple_query([QueryKeys::User(id), QueryKeys::Users], fetch_user);
+    let value = use_simple_query([QueryKey::User(id), QueryKey::Users], fetch_user);
 
     println!("Showing user {id}");
 
@@ -52,7 +52,7 @@ fn User(id: usize) -> Element {
 #[allow(non_snake_case)]
 #[component]
 fn AnotherUser(id: usize) -> Element {
-    let value = use_query([QueryKeys::User(id), QueryKeys::Users], || {
+    let value = use_query([QueryKey::User(id), QueryKey::Users], || {
         let initial = QueryValue::UserName("Jonathan while loading".to_string()).into();
 
         Query::new(fetch_user).initial(initial)
@@ -64,16 +64,16 @@ fn AnotherUser(id: usize) -> Element {
 }
 
 fn app() -> Element {
-    use_init_query_client::<QueryValue, (), QueryKeys>();
-    let client = use_query_client::<QueryValue, (), QueryKeys>();
+    use_init_query_client::<QueryValue, (), QueryKey>();
+    let client = use_query_client::<QueryValue, (), QueryKey>();
 
     let refresh_0 = move |_| {
-        client.invalidate_query(QueryKeys::User(0));
+        client.invalidate_query(QueryKey::User(0));
     };
 
-    let refresh_1 = move |_| client.invalidate_queries(&[QueryKeys::User(1)]);
+    let refresh_1 = move |_| client.invalidate_queries(&[QueryKey::User(1)]);
 
-    let refresh_all = move |_| client.invalidate_query(QueryKeys::Users);
+    let refresh_all = move |_| client.invalidate_query(QueryKey::Users);
 
     rsx!(
         User { id: 0 }
