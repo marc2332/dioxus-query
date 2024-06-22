@@ -104,12 +104,11 @@ where
 
         let is_fresh = value.read().unwrap().is_fresh();
         let is_loading = value.read().unwrap().is_loading();
-        let has_been_mutated = value.read().unwrap().has_been_mutated();
         let has_been_queried = value.read().unwrap().has_been_queried();
 
         if (!is_fresh && !is_loading) || !has_been_queried {
             // Only change to `Loading` if it has been changed at some point
-            if has_been_mutated {
+            if has_been_queried {
                 value.write().unwrap().set_to_loading();
                 for listener in listeners {
                     (self.scheduler.peek())(listener);
@@ -132,10 +131,6 @@ where
             // Get the listeners again in case they changed
             let QueryListeners { listeners, .. } = self.get_entry(entry);
 
-            for listener in listeners {
-                (self.scheduler.peek())(listener);
-            }
-        } else {
             for listener in listeners {
                 (self.scheduler.peek())(listener);
             }

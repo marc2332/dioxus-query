@@ -44,7 +44,7 @@ async fn fetch_user(keys: Vec<QueryKey>) -> QueryResult<QueryValue, ()> {
 fn User(id: usize) -> Element {
     let value = use_get_query([QueryKey::User(id), QueryKey::Users], fetch_user);
 
-    println!("Showing user {id}");
+    println!("Rendering user {id}");
 
     rsx!( p { "{value.result().value():?}" } )
 }
@@ -58,7 +58,7 @@ fn AnotherUser(id: usize) -> Element {
         Query::new(fetch_user).initial(initial)
     });
 
-    println!("Showing another user {id}");
+    println!("Rendering another user {id}");
 
     rsx!( p { "{value.result().value():?}" } )
 }

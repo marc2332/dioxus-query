@@ -35,11 +35,6 @@ impl<T, E> CachedResult<T, E> {
         }
     }
 
-    /// Check if this result has been mutated at some point
-    pub(crate) fn has_been_mutated(&self) -> bool {
-        self.instant.is_some()
-    }
-
     /// Check if this result has queried it's actual value yet
     pub(crate) fn has_been_queried(&self) -> bool {
         self.has_been_queried

@@ -36,7 +36,7 @@ fn User(id: usize) -> Element {
         mutate.mutate((0, "Not Marc".to_string()));
     };
 
-    println!("Showing user {id}");
+    println!("Rendering user {id}");
 
     rsx!(
         p { "{*mutate.result():?}" }
@@ -54,8 +54,8 @@ fn User(id: usize) -> Element {
 fn app() -> Element {
     rsx!(
         User { id: 0 }
-        User { id: 0 }
-        User { id: 0 }
-        User { id: 0 }
+        User { id: 1 }
+        User { id: 2 }
+        User { id: 3 }
     )
 }
