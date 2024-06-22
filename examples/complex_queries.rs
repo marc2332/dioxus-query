@@ -42,7 +42,7 @@ async fn fetch_user(keys: Vec<QueryKey>) -> QueryResult<QueryValue, ()> {
 #[allow(non_snake_case)]
 #[component]
 fn User(id: usize) -> Element {
-    let value = use_simple_query([QueryKey::User(id), QueryKey::Users], fetch_user);
+    let value = use_get_query([QueryKey::User(id), QueryKey::Users], fetch_user);
 
     println!("Showing user {id}");
 

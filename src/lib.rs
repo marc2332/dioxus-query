@@ -36,7 +36,7 @@
 //! #[allow(non_snake_case)]
 //! #[inline_props]
 //! fn User(id: usize) -> Element {
-//!    let value = use_simple_query(QueryKey::User(id)], fetch_user);
+//!    let value = use_get_query(QueryKey::User(id)], fetch_user);
 //!
 //!     render!( p { "{value.result().value():?}" } )
 //! }

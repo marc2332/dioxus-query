@@ -61,8 +61,8 @@ async fn fetch_user_age(keys: Vec<QueryKey>) -> QueryResult<QueryValue, QueryErr
 #[allow(non_snake_case)]
 #[component]
 fn User(id: usize) -> Element {
-    let user_name = use_simple_query([QueryKey::User(id)], fetch_user);
-    let user_age = use_simple_query([QueryKey::User(id)], fetch_user_age);
+    let user_name = use_get_query([QueryKey::User(id)], fetch_user);
+    let user_age = use_get_query([QueryKey::User(id)], fetch_user_age);
 
     println!("Showing user {id}");
 
