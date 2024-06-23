@@ -62,20 +62,24 @@ where
 
 impl<T, E, K: Eq + Hash> Drop for UseQueryCleaner<T, E, K> {
     fn drop(&mut self) {
-        let was_last_listener = {
-            let mut queries_registry = self.client.queries_registry.write_unchecked();
-            let query_listeners = queries_registry.get_mut(&self.registry_entry).unwrap();
-            // Remove this listener
-            query_listeners.listeners.remove(&self.scope_id);
-            query_listeners.listeners.is_empty()
+        let mut queries_registry = match self.client.queries_registry.try_write_unchecked() {
+            Err(dioxus_lib::prelude::BorrowMutError::Dropped(_)) => {
+                // It's safe to skip this error as the RadioStation's signals could have been dropped before the caller of this function.
+                // For instance: If you closed the app, the RadioStation would be dropped along all it's signals, causing the inner components
+                // to still have dropped signals and thus causing this error if they were to call the signals on a custom destructor.
+                return;
+            }
+            Err(e) => panic!("Unexpected error: {e}"),
+            Ok(v) => v,
         };
 
+        let query_listeners = queries_registry.get_mut(&self.registry_entry).unwrap();
+        // Remove this listener
+        query_listeners.listeners.remove(&self.scope_id);
+
         // Clear the queries registry of this listener if it was the last one
-        if was_last_listener {
-            self.client
-                .queries_registry
-                .write_unchecked()
-                .remove(&self.registry_entry);
+        if query_listeners.listeners.is_empty() {
+            queries_registry.remove(&self.registry_entry);
         }
     }
 }
@@ -126,73 +130,61 @@ where
     K: 'static + Eq + Hash + Clone,
 {
     let client = use_query_client();
-    use_memo_with_old_value(
-        query_keys.clone(),
-        |prev_query: Option<UseQuery<T, E, K>>| {
-            // If there is an previous query it means they query keys have changed.
-            if let Some(prev_query) = prev_query {
-                let prev_entry = &prev_query.cleaner.peek().registry_entry;
-                let mut queries_registry = client.queries_registry.write_unchecked();
-                // Remove the entry from the previous query
-                queries_registry.remove(prev_entry).unwrap();
+    use_sync_memo(query_keys.clone(), || {
+        let mut query = query();
+        query.registry_entry.query_keys = query_keys.to_vec();
+
+        let registry_entry = query.registry_entry;
+        let mut queries_registry = client.queries_registry.write_unchecked();
+
+        // Create a group of listeners for the given [RegistryEntry] key.
+        let query_listeners =
+            queries_registry
+                .entry(registry_entry.clone())
+                .or_insert(QueryListeners {
+                    listeners: HashSet::default(),
+                    value: QueryValue::new(RwLock::new(CachedResult::new(
+                        query.initial_value.unwrap_or_default(),
+                    ))),
+                    query_fn: query.query_fn,
+                });
+
+        // Register this listener's scope
+        query_listeners
+            .listeners
+            .insert(current_scope_id().unwrap());
+
+        let value = query_listeners.value.clone();
+
+        // Asynchronously initialize the query value
+        spawn({
+            to_owned![registry_entry];
+            async move {
+                client.run_new_query(&registry_entry).await;
             }
+        });
 
-            let mut query = query();
-            query.registry_entry.query_keys = query_keys.to_vec();
-
-            let registry_entry = query.registry_entry;
-            let mut queries_registry = client.queries_registry.write_unchecked();
-
-            // Create a group of listeners for the given [RegistryEntry] key.
-            let query_listeners =
-                queries_registry
-                    .entry(registry_entry.clone())
-                    .or_insert(QueryListeners {
-                        listeners: HashSet::default(),
-                        value: QueryValue::new(RwLock::new(CachedResult::new(
-                            query.initial_value.unwrap_or_default(),
-                        ))),
-                        query_fn: query.query_fn,
-                    });
-
-            // Register this listener's scope
-            query_listeners
-                .listeners
-                .insert(current_scope_id().unwrap());
-
-            let value = query_listeners.value.clone();
-
-            // Asynchronously initialize the query value
-            spawn({
-                to_owned![registry_entry];
-                async move {
-                    client.run_new_query(&registry_entry).await;
-                }
-            });
-
-            UseQuery {
+        UseQuery {
+            client,
+            value,
+            scope_id: current_scope_id().unwrap(),
+            cleaner: Signal::new(UseQueryCleaner {
                 client,
-                value,
+                registry_entry,
                 scope_id: current_scope_id().unwrap(),
-                cleaner: Signal::new(UseQueryCleaner {
-                    client,
-                    registry_entry,
-                    scope_id: current_scope_id().unwrap(),
-                }),
-            }
-        },
-    )
+            }),
+        }
+    })
 }
 
 /// Alternative to [use_memo]
 /// Benefits:
 /// - No unnecessary rerenders
-/// - Access to the previous value when dependencies change
 /// Downsides:
 /// - T needs to be Clone (cannot be avoided)
-fn use_memo_with_old_value<T: 'static + Clone, D: PartialEq + 'static>(
+fn use_sync_memo<T: 'static + Clone, D: PartialEq + 'static>(
     deps: D,
-    init: impl FnOnce(Option<T>) -> T,
+    init: impl FnOnce() -> T,
 ) -> T {
     struct Memoized<T, D> {
         value: T,
@@ -207,10 +199,7 @@ fn use_memo_with_old_value<T: 'static + Clone, D: PartialEq + 'static>(
         != Some(&deps);
 
     let new_value = if deps_have_changed {
-        let prev_value = memoized_value
-            .take()
-            .map(|memoized_value| memoized_value.value);
-        Some(init(prev_value))
+        Some(init())
     } else {
         None
     };
