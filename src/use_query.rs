@@ -2,10 +2,16 @@ use dioxus_lib::prelude::*;
 use futures_util::Future;
 use std::{
     any::TypeId,
+    cell::RefCell,
     collections::HashSet,
     hash::Hash,
+    rc::Rc,
     sync::{Arc, RwLock, RwLockReadGuard},
 };
+mod warnings {
+    pub use warnings::Warning;
+}
+pub use warnings::Warning;
 
 use crate::{
     cached_result::CachedResult,
@@ -62,25 +68,27 @@ where
 
 impl<T, E, K: Eq + Hash> Drop for UseQueryCleaner<T, E, K> {
     fn drop(&mut self) {
-        let mut queries_registry = match self.client.queries_registry.try_write_unchecked() {
-            Err(dioxus_lib::prelude::BorrowMutError::Dropped(_)) => {
-                // It's safe to skip this error as the RadioStation's signals could have been dropped before the caller of this function.
-                // For instance: If you closed the app, the RadioStation would be dropped along all it's signals, causing the inner components
-                // to still have dropped signals and thus causing this error if they were to call the signals on a custom destructor.
-                return;
+        dioxus_lib::prelude::warnings::signal_write_in_component_body::allow(|| {
+            let mut queries_registry = match self.client.queries_registry.try_write_unchecked() {
+                Err(dioxus_lib::prelude::BorrowMutError::Dropped(_)) => {
+                    // It's safe to skip this error as the RadioStation's signals could have been dropped before the caller of this function.
+                    // For instance: If you closed the app, the RadioStation would be dropped along all it's signals, causing the inner components
+                    // to still have dropped signals and thus causing this error if they were to call the signals on a custom destructor.
+                    return;
+                }
+                Err(e) => panic!("Unexpected error: {e}"),
+                Ok(v) => v,
+            };
+
+            let query_listeners = queries_registry.get_mut(&self.registry_entry).unwrap();
+            // Remove this listener
+            query_listeners.listeners.remove(&self.scope_id);
+
+            // Clear the queries registry of this listener if it was the last one
+            if query_listeners.listeners.is_empty() {
+                queries_registry.remove(&self.registry_entry);
             }
-            Err(e) => panic!("Unexpected error: {e}"),
-            Ok(v) => v,
-        };
-
-        let query_listeners = queries_registry.get_mut(&self.registry_entry).unwrap();
-        // Remove this listener
-        query_listeners.listeners.remove(&self.scope_id);
-
-        // Clear the queries registry of this listener if it was the last one
-        if query_listeners.listeners.is_empty() {
-            queries_registry.remove(&self.registry_entry);
-        }
+        });
     }
 }
 
@@ -135,45 +143,48 @@ where
         query.registry_entry.query_keys = query_keys.to_vec();
 
         let registry_entry = query.registry_entry;
-        let mut queries_registry = client.queries_registry.write_unchecked();
 
-        // Create a group of listeners for the given [RegistryEntry] key.
-        let query_listeners =
-            queries_registry
-                .entry(registry_entry.clone())
-                .or_insert(QueryListeners {
-                    listeners: HashSet::default(),
-                    value: QueryValue::new(RwLock::new(CachedResult::new(
-                        query.initial_value.unwrap_or_default(),
-                    ))),
-                    query_fn: query.query_fn,
-                });
+        dioxus_lib::prelude::warnings::signal_write_in_component_body::allow(|| {
+            let mut queries_registry = client.queries_registry.write_unchecked();
 
-        // Register this listener's scope
-        query_listeners
-            .listeners
-            .insert(current_scope_id().unwrap());
+            // Create a group of listeners for the given [RegistryEntry] key.
+            let query_listeners =
+                queries_registry
+                    .entry(registry_entry.clone())
+                    .or_insert(QueryListeners {
+                        listeners: HashSet::default(),
+                        value: QueryValue::new(RwLock::new(CachedResult::new(
+                            query.initial_value.unwrap_or_default(),
+                        ))),
+                        query_fn: query.query_fn,
+                    });
 
-        let value = query_listeners.value.clone();
+            // Register this listener's scope
+            query_listeners
+                .listeners
+                .insert(current_scope_id().unwrap());
 
-        // Asynchronously initialize the query value
-        spawn({
-            to_owned![registry_entry];
-            async move {
-                client.run_new_query(&registry_entry).await;
-            }
-        });
+            let value = query_listeners.value.clone();
 
-        UseQuery {
-            client,
-            value,
-            scope_id: current_scope_id().unwrap(),
-            cleaner: Signal::new(UseQueryCleaner {
+            // Asynchronously initialize the query value
+            spawn({
+                to_owned![registry_entry];
+                async move {
+                    client.run_new_query(&registry_entry).await;
+                }
+            });
+
+            UseQuery {
                 client,
-                registry_entry,
+                value,
                 scope_id: current_scope_id().unwrap(),
-            }),
-        }
+                cleaner: Signal::new(UseQueryCleaner {
+                    client,
+                    registry_entry,
+                    scope_id: current_scope_id().unwrap(),
+                }),
+            }
+        })
     })
 }
 
@@ -190,8 +201,8 @@ fn use_sync_memo<T: 'static + Clone, D: PartialEq + 'static>(
         value: T,
         deps: D,
     }
-    let mut value = use_signal::<Option<Memoized<T, D>>>(|| None);
-    let mut memoized_value = value.write();
+    let value = use_hook::<Rc<RefCell<Option<Memoized<T, D>>>>>(|| Rc::default());
+    let mut memoized_value = value.borrow_mut();
 
     let deps_have_changed = memoized_value
         .as_ref()
