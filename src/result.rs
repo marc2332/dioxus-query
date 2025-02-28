@@ -27,6 +27,9 @@ impl<T, E> QueryResult<T, E> {
     }
 
     pub fn set_loading(&mut self) {
+        if let Self::Loading(..) = self {
+            return;
+        }
         let result = mem::replace(self, Self::Loading(None));
         if let Self::Ok(v) = result {
             *self = Self::Loading(Some(v))
