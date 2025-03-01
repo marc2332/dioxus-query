@@ -54,9 +54,8 @@ async fn fetch_user(keys: Vec<QueryKey>) -> QueryResult<QueryValue, QueryError> 
             0 => Ok(QueryValue::UserName("Marc".to_string())),
             _ => Err(QueryError::UserNotFound(*id)),
         }
-        .into()
     } else {
-        QueryResult::Err(QueryError::Unknown)
+        Err(QueryError::Unknown)
     }
 }
 
@@ -69,11 +68,10 @@ fn User(id: usize) -> Element {
 }
 
 fn app() -> Element {
-    use_init_query_client::<QueryValue, QueryError, QueryKey>();
-    let client = use_query_client::<QueryValue, QueryError, QueryKey>();
+    let client = use_init_query_client::<QueryValue, QueryError, QueryKey>();
 
     let onclick = move |_| {
-         client.invalidate_query(QueryKey::User(0));
+         client.invalidate_queries(&[QueryKey::User(0)]);
     };
 
     rsx!(
@@ -91,6 +89,9 @@ fn app() -> Element {
 - [x] Invalidate queries when keys change
 - [x] Concurrent and batching of queries
 - [x] Concurrent mutations
+- [ ] Background interval invalidation
+- [ ] On window focus invalidation
+
 
 ## To Do
 - Tests

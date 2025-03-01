@@ -11,7 +11,7 @@ where
     E: 'static,
     A: 'static,
 {
-    value: Signal<MutationResult<T, E>>,
+    value: Signal<MutationState<T, E>>,
     mutation_fn: Signal<Arc<Box<MutationFn<T, E, A>>>>,
     scheduler: Signal<Arc<dyn Fn(ScopeId)>>,
     scope_id: ScopeId,
@@ -31,13 +31,13 @@ where
     E: 'static,
 {
     /// Get the current result from the query mutation.
-    pub fn result(&self) -> ReadableRef<Signal<MutationResult<T, E>>> {
+    pub fn result(&self) -> ReadableRef<Signal<MutationState<T, E>>> {
         self.value.peek()
     }
 
     async fn inner_mutate(
         arg: A,
-        mut value: Signal<MutationResult<T, E>>,
+        mut value: Signal<MutationState<T, E>>,
         scheduler: Signal<Arc<dyn Fn(ScopeId)>>,
         scope_id: ScopeId,
         mutation_fn: Signal<Arc<Box<MutationFn<T, E, A>>>>,
@@ -49,13 +49,13 @@ where
         // to decide to call the scheduler or not
         (scheduler.peek())(scope_id);
 
-        // Trigger the mutation function
+        // Run the mutation function
         let fut = (mutation_fn.peek())(arg);
         let fut = Box::into_pin(fut);
         let new_value = fut.await;
 
         // Set state to the new value and notify
-        value.set(new_value);
+        value.set(new_value.into());
 
         // TODO optimization: Check if the previous and new value are
         // different to decide to call the scheduler or not
@@ -64,22 +64,22 @@ where
 
     async fn inner_silent_mutate(
         arg: A,
-        mut value: Signal<MutationResult<T, E>>,
+        mut value: Signal<MutationState<T, E>>,
         mutation_fn: Signal<Arc<Box<MutationFn<T, E, A>>>>,
     ) {
         // Set state to loading
         value.write().set_loading();
 
-        // Trigger the mutation function
+        // Run the mutation function
         let fut = (mutation_fn.peek())(arg);
         let fut = Box::into_pin(fut);
         let new_value = fut.await;
 
         // Set state to the new value
-        value.set(new_value);
+        value.set(new_value.into());
     }
 
-    /// Call the mutation function with a set of arguments, in the **background**.
+    /// Call the mutation function with a set of arguments, runs in the **background**.
     pub fn mutate(&self, arg: A)
     where
         T: 'static,
@@ -95,8 +95,8 @@ where
         );
     }
 
-    /// Call the mutation function with a set of arguments.
-    pub async fn manual_mutate(&self, arg: A) {
+    /// Call the mutation function with a set of arguments and await it in place.
+    pub async fn mutate_async(&self, arg: A) {
         Self::inner_mutate(
             arg,
             self.value,
@@ -109,7 +109,7 @@ where
 
     /// Call the mutation function silently with a set of arguments, in the **background**.
     /// This will not make the component re run.
-    pub async fn mutate_silent(&self, arg: A)
+    pub fn mutate_silent(&self, arg: A)
     where
         T: 'static,
         E: 'static,
@@ -130,33 +130,34 @@ where
 }
 
 /// The result of a mutation.
+pub type MutationResult<T, E> = Result<T, E>;
+
+/// The state of a mutation.
 #[derive(PartialEq, Debug)]
-pub enum MutationResult<T, E> {
-    /// Mutation was successful
-    Ok(T),
-    /// Mutation erorred
-    Err(E),
-    /// Mutation is loading and may or not have a previous result
+pub enum MutationState<T, E> {
+    /// Contains a successful or errored result
+    Settled(MutationResult<T, E>),
+    /// Contains a loading state that may or not have a cached result
     Loading(Option<T>),
     /// Mutation has not been triggered yet
     Pending,
 }
 
-impl<T, E> MutationResult<T, E> {
+impl<T, E> MutationState<T, E> {
     pub fn is_ok(&self) -> bool {
-        matches!(self, MutationResult::Ok(..))
+        matches!(self, MutationState::Settled(Ok(..)))
     }
 
     pub fn is_err(&self) -> bool {
-        matches!(self, MutationResult::Err(..))
+        matches!(self, MutationState::Settled(Ok(..)))
     }
 
     pub fn is_loading(&self) -> bool {
-        matches!(self, MutationResult::Loading(..))
+        matches!(self, MutationState::Loading(..))
     }
 
     pub fn is_pending(&self) -> bool {
-        matches!(self, MutationResult::Pending)
+        matches!(self, MutationState::Pending)
     }
 
     pub fn set_loading(&mut self) {
@@ -167,22 +168,22 @@ impl<T, E> MutationResult<T, E> {
     }
 }
 
-impl<T, E> From<Result<T, E>> for MutationResult<T, E> {
+impl<T, E> From<Result<T, E>> for MutationState<T, E> {
     fn from(value: Result<T, E>) -> Self {
         match value {
-            Ok(v) => MutationResult::Ok(v),
-            Err(e) => MutationResult::Err(e),
+            Ok(v) => MutationState::Settled(Ok(v)),
+            Err(e) => MutationState::Settled(Err(e)),
         }
     }
 }
 
-impl<T, E> From<MutationResult<T, E>> for Option<T> {
-    fn from(result: MutationResult<T, E>) -> Self {
+impl<T, E> From<MutationState<T, E>> for Option<T> {
+    fn from(result: MutationState<T, E>) -> Self {
         match result {
-            MutationResult::Ok(v) => Some(v),
-            MutationResult::Err(_) => None,
-            MutationResult::Loading(v) => v,
-            MutationResult::Pending => None,
+            MutationState::Settled(Ok(v)) => Some(v),
+            MutationState::Settled(Err(_)) => None,
+            MutationState::Loading(v) => v,
+            MutationState::Pending => None,
         }
     }
 }
@@ -197,7 +198,7 @@ where
     F: Future<Output = MutationResult<T, E>> + 'static,
 {
     use_hook(|| UseMutation {
-        value: Signal::new(MutationResult::Pending),
+        value: Signal::new(MutationState::Pending),
         mutation_fn: Signal::new(Arc::new(Box::new(move |p| {
             let fut = mutation_fn(p);
             Box::new(fut)

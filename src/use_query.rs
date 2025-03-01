@@ -2,11 +2,12 @@ use dioxus_lib::prelude::*;
 use futures_util::Future;
 use std::{
     any::TypeId,
-    cell::RefCell,
+    cell::{Ref, RefCell},
     collections::HashSet,
     hash::Hash,
     rc::Rc,
-    sync::{Arc, RwLock, RwLockReadGuard},
+    sync::Arc,
+    time::Duration,
 };
 mod warnings {
     pub use warnings::Warning;
@@ -15,7 +16,7 @@ pub use warnings::Warning;
 
 use crate::{
     cached_result::CachedResult,
-    result::QueryResult,
+    result::{QueryResult, QueryState},
     use_query_client::{
         use_query_client, QueryFn, QueryListeners, QueryValue, RegistryEntry, UseQueryClient,
     },
@@ -50,8 +51,10 @@ where
 
 impl<T, E, K: Eq + Hash> UseQuery<T, E, K> {
     /// Get the current result from the query.
-    pub fn result(&self) -> RwLockReadGuard<CachedResult<T, E>> {
-        self.value.read().expect("Query value is already borrowed")
+    pub fn result(&self) -> Ref<CachedResult<T, E>> {
+        self.value
+            .try_borrow()
+            .expect("Query value is already borrowed")
     }
 }
 
@@ -71,9 +74,6 @@ impl<T, E, K: Eq + Hash> Drop for UseQueryCleaner<T, E, K> {
         dioxus_lib::prelude::warnings::signal_write_in_component_body::allow(|| {
             let mut queries_registry = match self.client.queries_registry.try_write_unchecked() {
                 Err(dioxus_lib::prelude::BorrowMutError::Dropped(_)) => {
-                    // It's safe to skip this error as the RadioStation's signals could have been dropped before the caller of this function.
-                    // For instance: If you closed the app, the RadioStation would be dropped along all it's signals, causing the inner components
-                    // to still have dropped signals and thus causing this error if they were to call the signals on a custom destructor.
                     return;
                 }
                 Err(e) => panic!("Unexpected error: {e}"),
@@ -95,8 +95,9 @@ impl<T, E, K: Eq + Hash> Drop for UseQueryCleaner<T, E, K> {
 /// The configuration for a given query listener.
 pub struct Query<T, E, K> {
     query_fn: Arc<Box<QueryFn<T, E, K>>>,
-    initial_value: Option<QueryResult<T, E>>,
+    initial_state: Option<QueryState<T, E>>,
     registry_entry: RegistryEntry<K>,
+    stale_time: Duration,
 }
 
 impl<T, E, K> Query<T, E, K> {
@@ -111,17 +112,24 @@ impl<T, E, K> Query<T, E, K> {
                 let fut = query_fn(q);
                 Box::new(fut)
             })),
-            initial_value: None,
+            initial_state: None,
             registry_entry: RegistryEntry {
                 query_keys: Vec::new(),
                 query_fn_id: TypeId::of::<F>(),
             },
+            stale_time: Duration::from_millis(0),
         }
     }
 
     /// Set the initial value of the query.
-    pub fn initial(mut self, initial_value: QueryResult<T, E>) -> Self {
-        self.initial_value = Some(initial_value);
+    pub fn initial(mut self, initial_value: QueryState<T, E>) -> Self {
+        self.initial_state = Some(initial_value);
+        self
+    }
+
+    /// Set the stale time of the query.
+    pub fn stale(mut self, stale_time: Duration) -> Self {
+        self.stale_time = stale_time;
         self
     }
 }
@@ -143,6 +151,7 @@ where
         query.registry_entry.query_keys = query_keys.to_vec();
 
         let registry_entry = query.registry_entry;
+        let stale_time = query.stale_time;
 
         dioxus_lib::prelude::warnings::signal_write_in_component_body::allow(|| {
             let mut queries_registry = client.queries_registry.write_unchecked();
@@ -153,8 +162,8 @@ where
                     .entry(registry_entry.clone())
                     .or_insert(QueryListeners {
                         listeners: HashSet::default(),
-                        value: QueryValue::new(RwLock::new(CachedResult::new(
-                            query.initial_value.unwrap_or_default(),
+                        value: QueryValue::new(RefCell::new(CachedResult::new(
+                            query.initial_state.unwrap_or_default(),
                         ))),
                         query_fn: query.query_fn,
                     });
@@ -170,7 +179,7 @@ where
             spawn({
                 to_owned![registry_entry];
                 async move {
-                    client.run_new_query(&registry_entry).await;
+                    client.run_new_query(&registry_entry, stale_time).await;
                 }
             });
 
@@ -191,6 +200,7 @@ where
 /// Alternative to [use_memo]
 /// Benefits:
 /// - No unnecessary rerenders
+///
 /// Downsides:
 /// - T needs to be Clone (cannot be avoided)
 fn use_sync_memo<T: 'static + Clone, D: PartialEq + 'static>(
@@ -201,7 +211,7 @@ fn use_sync_memo<T: 'static + Clone, D: PartialEq + 'static>(
         value: T,
         deps: D,
     }
-    let value = use_hook::<Rc<RefCell<Option<Memoized<T, D>>>>>(|| Rc::default());
+    let value = use_hook::<Rc<RefCell<Option<Memoized<T, D>>>>>(Rc::default);
     let mut memoized_value = value.borrow_mut();
 
     let deps_have_changed = memoized_value

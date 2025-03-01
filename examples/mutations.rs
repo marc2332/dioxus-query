@@ -24,7 +24,7 @@ enum MutationValue {
 async fn update_user((id, _name): (usize, String)) -> MutationResult<MutationValue, MutationError> {
     println!("Mutating user");
     sleep(Duration::from_millis(1000)).await;
-    Ok(MutationValue::UserUpdated(id)).into()
+    Ok(MutationValue::UserUpdated(id))
 }
 
 #[allow(non_snake_case)]
@@ -33,7 +33,7 @@ fn User(id: usize) -> Element {
     let mutate = use_mutation(update_user);
 
     let onclick = move |_| {
-        mutate.mutate((0, "Not Marc".to_string()));
+        mutate.mutate((id, "Not Marc".to_string()));
     };
 
     println!("Rendering user {id}");
