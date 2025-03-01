@@ -1,7 +1,5 @@
 use std::mem;
 
-use crate::cached_result::CachedResult;
-
 /// The result of a query.
 #[derive(Clone, PartialEq, Debug)]
 pub enum QueryResult<T, E> {
@@ -27,11 +25,8 @@ impl<T, E> QueryResult<T, E> {
     }
 
     pub fn set_loading(&mut self) {
-        if self.is_loading() {
-            return;
-        }
-        let result = mem::replace(self, Self::Loading(None));
-        if let Self::Ok(v) = result {
+        let result = mem::replace(self, Self::Loading(None)).into();
+        if let Some(v) = result {
             *self = Self::Loading(Some(v))
         }
     }
@@ -43,9 +38,9 @@ impl<T, E> Default for QueryResult<T, E> {
     }
 }
 
-impl<T, E> From<CachedResult<T, E>> for Option<T> {
-    fn from(result: CachedResult<T, E>) -> Self {
-        match result.value {
+impl<T, E> From<QueryResult<T, E>> for Option<T> {
+    fn from(result: QueryResult<T, E>) -> Self {
+        match result {
             QueryResult::Ok(v) => Some(v),
             QueryResult::Err(_) => None,
             QueryResult::Loading(v) => v,
