@@ -25,7 +25,7 @@ impl<T, E> QueryState<T, E> {
         matches!(self, QueryState::Loading(..))
     }
 
-    pub fn set_loading(&mut self) {
+    pub(crate) fn set_loading(&mut self) {
         let result = mem::replace(self, Self::Loading(None)).into();
         if let Some(v) = result {
             *self = Self::Loading(Some(v))

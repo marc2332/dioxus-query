@@ -12,7 +12,7 @@ pub struct CachedResult<T, E> {
 }
 
 impl<T, E> CachedResult<T, E> {
-    pub fn new(value: QueryState<T, E>) -> Self {
+    pub(crate) fn new(value: QueryState<T, E>) -> Self {
         Self {
             value,
             ..Default::default()
@@ -25,7 +25,7 @@ impl<T, E> CachedResult<T, E> {
     }
 
     /// Set this result's value
-    pub fn set_value(&mut self, new_value: QueryState<T, E>) {
+    pub(crate) fn set_value(&mut self, new_value: QueryState<T, E>) {
         self.value = new_value;
         self.instant = Some(Instant::now());
     }
