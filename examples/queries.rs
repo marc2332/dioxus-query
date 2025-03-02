@@ -16,6 +16,7 @@ fn main() {
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum QueryKey {
     User(usize),
+    Other,
 }
 
 #[derive(PartialEq, Debug)]
@@ -38,9 +39,8 @@ async fn fetch_user(keys: Vec<QueryKey>) -> QueryResult<QueryValue, QueryError> 
             0 => Ok(QueryValue::UserName("Marc".to_string())),
             _ => Err(QueryError::UserNotFound(*id)),
         }
-        .into()
     } else {
-        QueryResult::Err(QueryError::Unknown)
+        Err(QueryError::Unknown)
     }
 }
 
@@ -52,17 +52,30 @@ async fn fetch_user_age(keys: Vec<QueryKey>) -> QueryResult<QueryValue, QueryErr
             0 => Ok(QueryValue::UserAge(0)),
             _ => Err(QueryError::UserNotFound(*id)),
         }
-        .into()
     } else {
-        QueryResult::Err(QueryError::Unknown)
+        Err(QueryError::Unknown)
     }
+}
+
+#[derive(Debug)]
+enum MutationError {}
+
+#[derive(PartialEq, Debug)]
+enum MutationValue {
+    UserUpdated(usize),
+}
+
+async fn update_user((id, _name): (usize, String)) -> MutationResult<MutationValue, MutationError> {
+    println!("Mutating user");
+    sleep(Duration::from_millis(1000)).await;
+    Ok(MutationValue::UserUpdated(id))
 }
 
 #[allow(non_snake_case)]
 #[component]
 fn User(id: usize) -> Element {
-    let user_name = use_get_query([QueryKey::User(id)], fetch_user);
-    let user_age = use_get_query([QueryKey::User(id)], fetch_user_age);
+    let user_name = use_get_query([QueryKey::User(id), QueryKey::Other], fetch_user);
+    let user_age = use_get_query([QueryKey::User(id), QueryKey::Other], fetch_user_age);
 
     println!("Rendering user {id}");
 
@@ -73,10 +86,13 @@ fn User(id: usize) -> Element {
 }
 
 fn app() -> Element {
-    use_init_query_client::<QueryValue, QueryError, QueryKey>();
-    let client = use_query_client::<QueryValue, QueryError, QueryKey>();
+    let mutate = use_mutation(update_user);
+    let client = use_init_query_client::<QueryValue, QueryError, QueryKey>();
 
-    let refresh = move |_| client.invalidate_query(QueryKey::User(0));
+    let refresh = move |_| async move {
+        mutate.mutate_async((0, "Not Marc".to_string())).await;
+        client.invalidate_queries(&[QueryKey::User(0)]);
+    };
 
     rsx!(
         User { id: 0 }

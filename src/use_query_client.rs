@@ -3,12 +3,14 @@ use futures_util::{
     stream::{FuturesUnordered, StreamExt},
     Future,
 };
-use instant::Instant;
 use std::{
     any::TypeId,
+    cell::RefCell,
     collections::{HashMap, HashSet},
     hash::Hash,
-    sync::{Arc, RwLock},
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
 };
 
 use crate::{cached_result::CachedResult, result::QueryResult};
@@ -37,7 +39,7 @@ where
 
 pub(crate) type QueryFn<T, E, K> = dyn Fn(Vec<K>) -> Box<dyn Future<Output = QueryResult<T, E>>>;
 
-pub(crate) type QueryValue<T> = Arc<RwLock<T>>;
+pub(crate) type QueryValue<T> = Rc<RefCell<T>>;
 
 pub(crate) struct QueryListeners<T, E, K> {
     pub(crate) value: QueryValue<CachedResult<T, E>>,
@@ -94,43 +96,35 @@ where
         registry.get(entry).unwrap().clone()
     }
 
-    pub(crate) async fn run_new_query(&self, entry: &RegistryEntry<K>) {
+    pub(crate) async fn run_new_query(&self, entry: &RegistryEntry<K>, stale_time: Duration) {
         let QueryListeners {
             value,
             query_fn,
             listeners,
-            ..
         } = self.get_entry(entry);
 
-        let is_fresh = value.read().unwrap().is_fresh();
-        let is_loading = value.read().unwrap().is_loading();
-        let has_been_queried = value.read().unwrap().has_been_queried();
+        let is_fresh = value.borrow().is_fresh(stale_time);
+        let is_loading = value.borrow().is_loading();
+        let has_been_queried = value.borrow().has_been_loaded();
 
         if (!is_fresh && !is_loading) || !has_been_queried {
-            // Only change to `Loading` if it has been changed at some point
+            // If the query still has its initial state because it hasn't been loaded yet
+            // we don't need to mark the value as loading, it would be an unnecesssary notification.
             if has_been_queried {
-                value.write().unwrap().set_to_loading();
+                value.borrow_mut().set_to_loading();
                 for listener in listeners {
                     (self.scheduler.peek())(listener);
                 }
             }
 
-            // Mark as queried
-            value.write().unwrap().has_been_queried = true;
-
-            // Fetch the result
+            // Run the query function
             let fut = (query_fn)(entry.query_keys.clone());
             let fut = Box::into_pin(fut);
             let new_value = fut.await;
-            *value.write().unwrap() = CachedResult {
-                value: new_value,
-                instant: Some(Instant::now()),
-                has_been_queried: true,
-            };
+            value.borrow_mut().set_value(new_value.into());
 
-            // Get the listeners again in case they changed
+            // Get the listeners again in case they changed while the query function was running
             let QueryListeners { listeners, .. } = self.get_entry(entry);
-
             for listener in listeners {
                 (self.scheduler.peek())(listener);
             }
@@ -140,7 +134,7 @@ where
     pub(crate) async fn invalidate_queries_inner(
         queries_registry: Signal<QueriesRegistry<T, E, K>>,
         scheduler: Signal<Arc<dyn Fn(ScopeId)>>,
-        keys_to_invalidate: &[K],
+        keys_to_invalidate: Vec<K>,
     ) {
         let tasks = FuturesUnordered::new();
         for (
@@ -154,33 +148,28 @@ where
         {
             let mut query_listeners = HashSet::<ScopeId>::default();
 
-            // Add the listeners of this `query_keys` when at least one of the keys match
-            if query_keys.iter().any(|k| keys_to_invalidate.contains(k)) {
+            // Save for the later those listeners that contain all the query keys to invalidate
+            if keys_to_invalidate.iter().all(|k| query_keys.contains(k)) {
                 for listener in listeners {
                     query_listeners.insert(*listener);
                 }
             }
 
-            // Save the group of listeners
             if !query_listeners.is_empty() {
-                // Only change to `Loading` if it has been changed at some point
-                value.write().unwrap().set_to_loading();
+                value.borrow_mut().set_to_loading();
                 for listener in &query_listeners {
                     (scheduler.peek())(*listener);
                 }
 
-                to_owned![query_fn, query_keys, query_listeners, value];
+                // Run the query function
+                let fut = (query_fn)(query_keys.clone());
+                let fut = Box::into_pin(fut);
+
+                to_owned![query_listeners, value];
 
                 tasks.push(Box::pin(async move {
-                    // Fetch the result
-                    let fut = (query_fn)(query_keys.clone());
-                    let fut = Box::into_pin(fut);
                     let new_value = fut.await;
-                    *value.write().unwrap() = CachedResult {
-                        value: new_value,
-                        instant: Some(Instant::now()),
-                        has_been_queried: true,
-                    };
+                    value.borrow_mut().set_value(new_value.into());
 
                     for listener in query_listeners {
                         (scheduler.peek())(listener);
@@ -192,24 +181,19 @@ where
         tasks.count().await;
     }
 
-    /// Invalidate a single query.
-    /// It will run alone, after previous queries have finished.
-    pub fn invalidate_query(&self, key_to_invalidate: K) {
-        let queries_registry = self.queries_registry;
-        let scheduler = self.scheduler;
-        spawn(async move {
-            Self::invalidate_queries_inner(queries_registry, scheduler, &[key_to_invalidate]).await;
-        });
-    }
-
-    /// Invalidate a group of queries.
-    /// They will all run concurrently, after previous queries have finished.
+    /// Invalidate one or multiple queries that contain all the specified keys.
+    /// They will all run concurrently.
     pub fn invalidate_queries(&self, keys_to_invalidate: &[K]) {
         let queries_registry = self.queries_registry;
         let scheduler = self.scheduler;
         let keys_to_invalidate = keys_to_invalidate.to_vec();
         spawn(async move {
-            Self::invalidate_queries_inner(queries_registry, scheduler, &keys_to_invalidate).await;
+            Self::invalidate_queries_inner(
+                queries_registry,
+                scheduler,
+                keys_to_invalidate.to_vec(),
+            )
+            .await;
         });
     }
 }

@@ -33,9 +33,8 @@ async fn fetch_user(keys: Vec<QueryKey>) -> QueryResult<QueryValue, ()> {
             1 => Ok(QueryValue::UserName("Evan".to_string())),
             _ => Err(()),
         }
-        .into()
     } else {
-        QueryResult::Err(())
+        Err(())
     }
 }
 
@@ -68,12 +67,12 @@ fn app() -> Element {
     let client = use_query_client::<QueryValue, (), QueryKey>();
 
     let refresh_0 = move |_| {
-        client.invalidate_query(QueryKey::User(0));
+        client.invalidate_queries(&[QueryKey::User(0)]);
     };
 
     let refresh_1 = move |_| client.invalidate_queries(&[QueryKey::User(1)]);
 
-    let refresh_all = move |_| client.invalidate_query(QueryKey::Users);
+    let refresh_all = move |_| client.invalidate_queries(&[QueryKey::Users]);
 
     rsx!(
         User { id: 0 }
