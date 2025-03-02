@@ -1,7 +1,5 @@
 use std::mem;
 
-use crate::cached_result::CachedResult;
-
 /// The result of a query.
 pub type QueryResult<T, E> = Result<T, E>;
 
@@ -28,8 +26,8 @@ impl<T, E> QueryState<T, E> {
     }
 
     pub fn set_loading(&mut self) {
-        let result = mem::replace(self, Self::Loading(None));
-        if let Self::Settled(Ok(v)) = result {
+        let result = mem::replace(self, Self::Loading(None)).into();
+        if let Some(v) = result {
             *self = Self::Loading(Some(v))
         }
     }
@@ -41,9 +39,9 @@ impl<T, E> Default for QueryState<T, E> {
     }
 }
 
-impl<T, E> From<CachedResult<T, E>> for Option<T> {
-    fn from(result: CachedResult<T, E>) -> Self {
-        match result.value {
+impl<T, E> From<QueryState<T, E>> for Option<T> {
+    fn from(result: QueryState<T, E>) -> Self {
+        match result {
             QueryState::Settled(Ok(v)) => Some(v),
             QueryState::Settled(Err(_)) => None,
             QueryState::Loading(v) => v,
