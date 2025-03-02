@@ -146,7 +146,7 @@ where
     K: 'static + Eq + Hash + Clone,
 {
     let client = use_query_client();
-    use_sync_memo(query_keys.clone(), || {
+    use_sync_memo(query_keys, move |query_keys| {
         let mut query = query();
         query.registry_entry.query_keys = query_keys.to_vec();
 
@@ -205,7 +205,7 @@ where
 /// - T needs to be Clone (cannot be avoided)
 fn use_sync_memo<T: 'static + Clone, D: PartialEq + 'static>(
     deps: D,
-    init: impl FnOnce() -> T,
+    init: impl FnOnce(&D) -> T,
 ) -> T {
     struct Memoized<T, D> {
         value: T,
@@ -220,7 +220,7 @@ fn use_sync_memo<T: 'static + Clone, D: PartialEq + 'static>(
         != Some(&deps);
 
     let new_value = if deps_have_changed {
-        Some(init())
+        Some(init(&deps))
     } else {
         None
     };
