@@ -6,8 +6,6 @@
 
 See the [Docs](https://docs.rs/dioxus-query/latest/dioxus_query/) or join the [Discord](https://discord.gg/gwuU8vGRPr). 
 
-⚠️ **Work in progress ⚠️**
-
 ## Support
 
 - **Dioxus v0.6** 🧬
