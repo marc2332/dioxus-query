@@ -1,3 +1,4 @@
+use dioxus_lib::prelude::*;
 use instant::Instant;
 use std::{fmt::Debug, ops::Deref, time::Duration};
 
@@ -9,6 +10,7 @@ pub struct CachedResult<T, E> {
     pub(crate) value: QueryState<T, E>,
     pub(crate) instant: Option<Instant>,
     pub(crate) has_been_loaded: bool,
+    pub(crate) revalidation_options: Option<RevalidationOptions>,
 }
 
 impl<T, E> CachedResult<T, E> {
@@ -28,6 +30,13 @@ impl<T, E> CachedResult<T, E> {
     pub(crate) fn set_value(&mut self, new_value: QueryState<T, E>) {
         self.value = new_value;
         self.instant = Some(Instant::now());
+    }
+
+    pub(crate) fn set_revalidate_options(
+        &mut self,
+        revalidate_options: Option<RevalidationOptions>,
+    ) {
+        self.revalidation_options = revalidate_options;
     }
 
     /// Check if this result is stale yet
@@ -66,6 +75,13 @@ impl<T, E> Default for CachedResult<T, E> {
             value: Default::default(),
             instant: None,
             has_been_loaded: false,
+            revalidation_options: None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RevalidationOptions {
+    pub(crate) interval: Duration,
+    pub(crate) task: Task,
 }

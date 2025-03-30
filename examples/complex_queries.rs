@@ -58,8 +58,23 @@ fn AnotherUser(id: usize) -> Element {
     });
 
     println!("Rendering another user {id}");
+    rsx!(p { "{value.result().value():?}" })
+}
 
-    rsx!( p { "{value.result().value():?}" } )
+#[allow(non_snake_case)]
+#[component]
+fn AutoUpdatingUser(id: usize) -> Element {
+    let value = use_query([QueryKey::User(id)], || {
+        Query::new(fetch_user).revalidate(Duration::from_secs(3))
+    });
+    println!("Rendering auto-updating user {id}");
+
+    rsx!(
+        div {
+            p { "Auto-updating every 3 seconds:" }
+            p { "{value.result().value():?}" }
+        }
+    )
 }
 
 fn app() -> Element {
@@ -80,5 +95,9 @@ fn app() -> Element {
         button { onclick: refresh_0, label { "Refresh 0" } }
         button { onclick: refresh_1, label { "Refresh 1" } }
         button { onclick: refresh_all, label { "Refresh all" } }
+
+        h1 { "Auto-revalidating Query" }
+        p { "This query automatically updates with a timestamp every 3 seconds" }
+        AutoUpdatingUser { id: 0 }
     )
 }

@@ -9,6 +9,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+
 mod warnings {
     pub use warnings::Warning;
 }
@@ -98,6 +99,7 @@ pub struct Query<T, E, K> {
     initial_state: Option<QueryState<T, E>>,
     registry_entry: RegistryEntry<K>,
     stale_time: Duration,
+    revalidate_interval: Option<Duration>,
 }
 
 impl<T, E, K> Query<T, E, K> {
@@ -118,6 +120,7 @@ impl<T, E, K> Query<T, E, K> {
                 query_fn_id: TypeId::of::<F>(),
             },
             stale_time: Duration::from_millis(0),
+            revalidate_interval: None,
         }
     }
 
@@ -130,6 +133,13 @@ impl<T, E, K> Query<T, E, K> {
     /// Set the stale time of the query.
     pub fn stale(mut self, stale_time: Duration) -> Self {
         self.stale_time = stale_time;
+        self
+    }
+
+    /// Set the revalidation interval for the query.
+    /// The query will be automatically refetched at this interval.
+    pub fn revalidate(mut self, interval: Duration) -> Self {
+        self.revalidate_interval = Some(interval);
         self
     }
 }
@@ -152,6 +162,7 @@ where
 
         let registry_entry = query.registry_entry;
         let stale_time = query.stale_time;
+        let revalidate_interval = query.revalidate_interval;
 
         dioxus_lib::prelude::warnings::signal_write_in_component_body::allow(|| {
             let mut queries_registry = client.queries_registry.write_unchecked();
@@ -179,7 +190,9 @@ where
             spawn({
                 to_owned![registry_entry];
                 async move {
-                    client.run_new_query(&registry_entry, stale_time).await;
+                    client
+                        .run_new_query(&registry_entry, stale_time, revalidate_interval)
+                        .await;
                 }
             });
 

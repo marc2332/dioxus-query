@@ -13,7 +13,10 @@ use std::{
     time::Duration,
 };
 
-use crate::{cached_result::CachedResult, result::QueryResult};
+use crate::{
+    cached_result::{CachedResult, RevalidationOptions},
+    result::QueryResult,
+};
 
 pub fn use_init_query_client<T, E, K>() -> UseQueryClient<T, E, K>
 where
@@ -96,7 +99,12 @@ where
         registry.get(entry).unwrap().clone()
     }
 
-    pub(crate) async fn run_new_query(&self, entry: &RegistryEntry<K>, stale_time: Duration) {
+    pub(crate) async fn run_new_query(
+        &self,
+        entry: &RegistryEntry<K>,
+        stale_time: Duration,
+        revalidate_interval: Option<Duration>,
+    ) {
         let QueryListeners {
             value,
             query_fn,
@@ -128,6 +136,44 @@ where
             for listener in listeners {
                 (self.scheduler.peek())(listener);
             }
+        }
+        // Handle revalidation if we receive an interval that is different from the current one.
+        if value
+            .borrow()
+            .revalidation_options
+            .as_ref()
+            .map(|o| o.interval)
+            != revalidate_interval
+        {
+            let new_revalidate_options = match revalidate_interval {
+                // When we do have an interval to update with, we set up a task to revalidate the query.
+                Some(interval) => {
+                    let query_keys = entry.query_keys.clone();
+                    let self_clone = self.clone();
+                    let task = spawn(async move {
+                        loop {
+                            // Wait for the specified interval, using the appropriate sleep function.
+                            #[cfg(not(target_arch = "wasm32"))]
+                            tokio::time::sleep(interval).await;
+                            #[cfg(target_arch = "wasm32")]
+                            async_std::time::sleep(interval).await;
+                            self_clone.invalidate_queries(&query_keys);
+                        }
+                    });
+                    Some(RevalidationOptions {
+                        interval: revalidate_interval.unwrap(),
+                        task,
+                    })
+                }
+                // When we don't have an interval to update with, set the revalidation options to None.
+                None => None,
+            };
+            if let Some(task) = value.borrow().revalidation_options.as_ref().map(|o| o.task) {
+                task.cancel();
+            }
+            value
+                .borrow_mut()
+                .set_revalidate_options(new_revalidate_options);
         }
     }
 
