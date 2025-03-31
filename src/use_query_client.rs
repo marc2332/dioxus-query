@@ -145,6 +145,10 @@ where
             .map(|o| o.interval)
             != revalidate_interval
         {
+            // Drop the existing task, if it exists.
+            if let Some(task) = value.borrow().revalidation_options.as_ref().map(|o| o.task) {
+                task.cancel();
+            }
             let new_revalidate_options = match revalidate_interval {
                 // When we do have an interval to update with, we set up a task to revalidate the query.
                 Some(interval) => {
@@ -168,9 +172,6 @@ where
                 // When we don't have an interval to update with, set the revalidation options to None.
                 None => None,
             };
-            if let Some(task) = value.borrow().revalidation_options.as_ref().map(|o| o.task) {
-                task.cancel();
-            }
             value
                 .borrow_mut()
                 .set_revalidate_options(new_revalidate_options);
