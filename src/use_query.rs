@@ -219,6 +219,8 @@ fn use_sync_memo<T: 'static + Clone, D: PartialEq + 'static>(
         .map(|memoized_value| &memoized_value.deps)
         != Some(&deps);
 
+        println!("{}", memoized_value.is_some());
+
     let new_value = if deps_have_changed {
         Some(init(&deps))
     } else {
@@ -235,6 +237,42 @@ fn use_sync_memo<T: 'static + Clone, D: PartialEq + 'static>(
 
     memoized_value.as_ref().unwrap().value.clone()
 }
+
+fn use_sync_memos<T: 'static + Clone, D: PartialEq + 'static>(
+    memos: Vec<(D,  impl FnOnce(&D) -> T)>,
+) -> Vec<T> {
+    struct Memoized<T, D> {
+        value: T,
+        deps: D,
+    }
+    let values = use_hook::<Rc<RefCell<Vec<Option<Memoized<T, D>>>>>>(Rc::default);
+    for (i, (deps, init)) in memos.into_iter().enumerate() {
+        let mut memoized_values = values.borrow_mut();
+        if memoized_values.get(i).is_none() {
+            memoized_values.insert(i, None);
+        }
+        let memoized_value = memoized_values.get_mut(i);
+
+        if let Some(memoized_value) = memoized_value {
+            let deps_have_changed = memoized_value
+                .as_ref()
+                .map(|memoized_value| &memoized_value.deps)
+                != Some(&deps);
+
+            if deps_have_changed {
+                let new_value = init(&deps);
+                let new_memoized_value = Memoized {
+                    value: new_value,
+                    deps,
+                };
+                *memoized_value = Some(new_memoized_value);
+            }
+        }
+    }
+
+    let x = values.borrow().iter().map(|e| e.as_ref().unwrap().value.clone()).collect::<Vec<T>>(); x
+}
+
 
 /// Register a query listener with the given combination of **query keys** and **query function**.
 /// See [UseQuery] on how to use it.
@@ -256,4 +294,70 @@ where
     F: 'static + Future<Output = QueryResult<T, E>>,
 {
     use_query(query_keys, || Query::new(query_fn))
+}
+
+
+/// Register a query listener with the given query configuration.
+/// See [UseQuery] on how to use it.
+pub fn use_queries<T, E, K, I>(
+    queries: Vec<(Vec<K>, I)>,
+) -> Vec<UseQuery<T, E, K>>
+where
+    T: 'static + PartialEq,
+    E: 'static,
+    K: 'static + Eq + Hash + Clone,
+    I: FnOnce() -> Query<T, E, K>
+{
+    let client = use_query_client::<T, E, K>();
+    use_sync_memos(queries.into_iter().map(|(query_keys, query)| 
+        (query_keys, |query_keys: &Vec<K>| {
+            let mut query = query();
+                query.registry_entry.query_keys = query_keys.to_vec();
+        
+                let registry_entry = query.registry_entry;
+                let stale_time = query.stale_time;
+        
+                dioxus_lib::prelude::warnings::signal_write_in_component_body::allow(|| {
+                    let mut queries_registry = client.queries_registry.write_unchecked();
+        
+                    // Create a group of listeners for the given [RegistryEntry] key.
+                    let query_listeners =
+                        queries_registry
+                            .entry(registry_entry.clone())
+                            .or_insert(QueryListeners {
+                                listeners: HashSet::default(),
+                                value: QueryValue::new(RefCell::new(CachedResult::new(
+                                    query.initial_state.unwrap_or_default(),
+                                ))),
+                                query_fn: query.query_fn,
+                            });
+        
+                    // Register this listener's scope
+                    query_listeners
+                        .listeners
+                        .insert(current_scope_id().unwrap());
+        
+                    let value = query_listeners.value.clone();
+        
+                    // Asynchronously initialize the query value
+                    spawn({
+                        to_owned![registry_entry];
+                        async move {
+                            client.run_new_query(&registry_entry, stale_time).await;
+                        }
+                    });
+        
+                    UseQuery {
+                        client,
+                        value,
+                        scope_id: current_scope_id().unwrap(),
+                        cleaner: Signal::new(UseQueryCleaner {
+                            client,
+                            registry_entry,
+                            scope_id: current_scope_id().unwrap(),
+                        }),
+                    }
+                })
+        })
+    ).collect::<Vec<_>>())
 }
