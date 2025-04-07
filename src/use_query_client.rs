@@ -157,10 +157,11 @@ where
                     let task = spawn(async move {
                         loop {
                             // Wait for the specified interval, using the appropriate sleep function.
-                            #[cfg(not(target_arch = "wasm32"))]
+                            #[cfg(not(target_family = "wasm"))]
                             tokio::time::sleep(interval).await;
-                            #[cfg(target_arch = "wasm32")]
-                            async_std::time::sleep(interval).await;
+                            #[cfg(target_family = "wasm")]
+                            wasmtimer::tokio::sleep(interval).await;
+
                             self_clone.invalidate_queries(&query_keys);
                         }
                     });
