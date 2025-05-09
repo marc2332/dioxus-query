@@ -103,14 +103,14 @@ where
             listeners,
         } = self.get_entry(entry);
 
-        let is_fresh = value.borrow().is_fresh(stale_time);
+        let is_stale = value.borrow().is_stale(stale_time);
         let is_loading = value.borrow().is_loading();
-        let has_been_queried = value.borrow().has_been_loaded();
+        let has_been_loaded = value.borrow().has_been_loaded();
 
-        if (!is_fresh && !is_loading) || !has_been_queried {
+        if (is_stale && !is_loading) || !has_been_loaded {
             // If the query still has its initial state because it hasn't been loaded yet
             // we don't need to mark the value as loading, it would be an unnecesssary notification.
-            if has_been_queried {
+            if has_been_loaded {
                 value.borrow_mut().set_to_loading();
                 for listener in listeners {
                     (self.scheduler.peek())(listener);
@@ -128,6 +128,8 @@ where
             for listener in listeners {
                 (self.scheduler.peek())(listener);
             }
+
+            value.borrow_mut().set_to_loaded();
         }
     }
 
