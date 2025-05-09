@@ -17,6 +17,12 @@ futures-util = "0.3.28"
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 warnings = "0.2.1"
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = {version = "^1", features = ["time"]}
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+wasmtimer = "0.4.1"
+
 [dev-dependencies]
 dioxus = { version = "0.6", features = ["desktop"] }
 tokio = { version = "1.29.1", features = ["time"] }
