@@ -161,7 +161,7 @@ impl<T, E> MutationState<T, E> {
     }
 
     pub fn set_loading(&mut self) {
-        let result = mem::replace(self, Self::Pending).into();
+        let result = mem::replace(self, Self::Loading(None)).into();
         if let Some(v) = result {
             *self = Self::Loading(Some(v))
         }
