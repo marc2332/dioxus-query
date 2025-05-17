@@ -141,7 +141,7 @@ pub fn use_query<T, E, K, const N: usize>(
     query: impl FnOnce() -> Query<T, E, K>,
 ) -> UseQuery<T, E, K>
 where
-    T: 'static + PartialEq,
+    T: 'static,
     E: 'static,
     K: 'static + Eq + Hash + Clone,
 {
@@ -249,7 +249,7 @@ pub fn use_get_query<T, E, K, Q, F, const N: usize>(
     query_fn: Q,
 ) -> UseQuery<T, E, K>
 where
-    T: 'static + PartialEq,
+    T: 'static,
     E: 'static,
     K: 'static + Eq + Hash + Clone,
     Q: 'static + Fn(Vec<K>) -> F,
