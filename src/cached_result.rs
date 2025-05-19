@@ -31,11 +31,11 @@ impl<T, E> CachedResult<T, E> {
     }
 
     /// Check if this result is stale yet
-    pub fn is_fresh(&self, stale_time: Duration) -> bool {
+    pub fn is_stale(&self, stale_time: Duration) -> bool {
         if let Some(instant) = self.instant {
-            instant.elapsed() < stale_time
+            instant.elapsed() > stale_time
         } else {
-            false
+            true
         }
     }
 
@@ -48,6 +48,10 @@ impl<T, E> CachedResult<T, E> {
     pub(crate) fn set_to_loading(&mut self) {
         self.state.set_loading();
         self.instant = Some(Instant::now());
+    }
+
+    /// Set this result as loaded
+    pub(crate) fn set_to_loaded(&mut self) {
         self.has_been_loaded = true;
     }
 }

@@ -67,6 +67,7 @@ where
     client: UseQueryClient<T, E, K>,
     registry_entry: RegistryEntry<K>,
     scope_id: ScopeId,
+    stale_time: Duration,
 }
 
 impl<T, E, K: Eq + Hash> Drop for UseQueryCleaner<T, E, K> {
@@ -84,8 +85,10 @@ impl<T, E, K: Eq + Hash> Drop for UseQueryCleaner<T, E, K> {
             // Remove this listener
             query_listeners.listeners.remove(&self.scope_id);
 
+            let is_stale = query_listeners.value.borrow().is_stale(self.stale_time);
+
             // Clear the queries registry of this listener if it was the last one
-            if query_listeners.listeners.is_empty() {
+            if query_listeners.listeners.is_empty() && is_stale {
                 queries_registry.remove(&self.registry_entry);
             }
         });
@@ -141,7 +144,7 @@ pub fn use_query<T, E, K, const N: usize>(
     query: impl FnOnce() -> Query<T, E, K>,
 ) -> UseQuery<T, E, K>
 where
-    T: 'static + PartialEq,
+    T: 'static,
     E: 'static,
     K: 'static + Eq + Hash + Clone,
 {
@@ -177,7 +180,7 @@ where
 
             // Asynchronously initialize the query value
             spawn({
-                to_owned![registry_entry];
+                to_owned![registry_entry, stale_time];
                 async move {
                     client.run_new_query(&registry_entry, stale_time).await;
                 }
@@ -191,6 +194,7 @@ where
                     client,
                     registry_entry,
                     scope_id: current_scope_id().unwrap(),
+                    stale_time,
                 }),
             }
         })
@@ -249,7 +253,7 @@ pub fn use_get_query<T, E, K, Q, F, const N: usize>(
     query_fn: Q,
 ) -> UseQuery<T, E, K>
 where
-    T: 'static + PartialEq,
+    T: 'static,
     E: 'static,
     K: 'static + Eq + Hash + Clone,
     Q: 'static + Fn(Vec<K>) -> F,
