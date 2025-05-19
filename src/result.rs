@@ -31,6 +31,14 @@ impl<T, E> QueryState<T, E> {
             *self = Self::Loading(Some(v))
         }
     }
+
+    pub fn value(&self) -> Option<&T> {
+        match self {
+            Self::Settled(Ok(v)) => Some(v),
+            Self::Loading(Some(v)) => Some(v),
+            _ => None,
+        }
+    }
 }
 
 impl<T, E> Default for QueryState<T, E> {
