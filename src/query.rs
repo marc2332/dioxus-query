@@ -66,37 +66,34 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Pending => f.write_str("Pending"),
-            Self::Loading { res } => write!(f, "{res:?}"),
-            Self::Fulfilled { res, .. } => write!(f, "{res:?}"),
+            Self::Loading { res } => write!(f, "Loading {{ {res:?} }}"),
+            Self::Fulfilled { res, .. } => write!(f, "Fulfilled {{ {res:?} }}"),
         }
     }
 }
 
 impl<Q: QueryCapability> QueryStateData<Q> {
-    pub(crate) fn into_loading(self) -> QueryStateData<Q> {
-        match self {
-            QueryStateData::Pending => QueryStateData::Loading { res: None },
-            QueryStateData::Loading { res } => QueryStateData::Loading { res },
-            QueryStateData::Fulfilled { res, .. } => QueryStateData::Loading { res: Some(res) },
-        }
-    }
-
+    /// Check if the state is [QueryStateData::Fulfilled] and [Result::Ok].
     pub fn is_ok(&self) -> bool {
         matches!(self, QueryStateData::Fulfilled { res: Ok(_), .. })
     }
 
+    /// Check if the state is [QueryStateData::Fulfilled] and [Result::Err].
     pub fn is_err(&self) -> bool {
         matches!(self, QueryStateData::Fulfilled { res: Err(_), .. })
     }
 
+    /// Check if the state is [QueryStateData::Loading].
     pub fn is_loading(&self) -> bool {
         matches!(self, QueryStateData::Loading { .. })
     }
 
+    /// Check if the state is [QueryStateData::Pending].
     pub fn is_pending(&self) -> bool {
         matches!(self, QueryStateData::Pending)
     }
 
+    /// Check if the state is stale or not, where stale means outdated.
     pub fn is_stale(&self, query: &Query<Q>) -> bool {
         match self {
             QueryStateData::Pending => true,
@@ -107,6 +104,7 @@ impl<Q: QueryCapability> QueryStateData<Q> {
         }
     }
 
+    /// Get the value as an [Option].
     pub fn ok(&self) -> Option<&Q::Ok> {
         match self {
             Self::Fulfilled { res: Ok(res), .. } => Some(res),
@@ -115,11 +113,20 @@ impl<Q: QueryCapability> QueryStateData<Q> {
         }
     }
 
+    /// Get the value as an [Result] if possible, otherwise it will panic.
     pub fn unwrap(&self) -> &Result<Q::Ok, Q::Err> {
         match self {
             Self::Loading { res: Some(v) } => v,
             Self::Fulfilled { res, .. } => res,
             _ => unreachable!(),
+        }
+    }
+
+    fn into_loading(self) -> QueryStateData<Q> {
+        match self {
+            QueryStateData::Pending => QueryStateData::Loading { res: None },
+            QueryStateData::Loading { res } => QueryStateData::Loading { res },
+            QueryStateData::Fulfilled { res, .. } => QueryStateData::Loading { res: Some(res) },
         }
     }
 }
