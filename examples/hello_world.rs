@@ -13,8 +13,21 @@ fn main() {
     launch(app);
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct FancyClient;
+
+impl FancyClient {
+    pub fn name(&self) -> &'static str {
+        "Marc"
+    }
+
+    pub fn age(&self) -> u8 {
+        123
+    }
+}
+
 #[derive(Clone, PartialEq, Hash, Eq)]
-struct GetUserName;
+struct GetUserName(Captured<FancyClient>);
 
 impl QueryCapability for GetUserName {
     type Ok = String;
@@ -25,17 +38,17 @@ impl QueryCapability for GetUserName {
         println!("Fetching name of user {user_id}");
         sleep(Duration::from_millis(650)).await;
         match user_id {
-            0 => Ok("Marc".to_string()),
+            0 => Ok(self.0.name().to_string()),
             _ => Err(()),
         }
     }
 }
 
 #[derive(Clone, PartialEq, Hash, Eq)]
-struct GetUserAge;
+struct GetUserAge(Captured<FancyClient>);
 
 impl QueryCapability for GetUserAge {
-    type Ok = usize;
+    type Ok = u8;
     type Err = ();
     type Keys = usize;
 
@@ -43,7 +56,7 @@ impl QueryCapability for GetUserAge {
         println!("Fetching age of user {user_id}");
         sleep(Duration::from_millis(1000)).await;
         match user_id {
-            0 => Ok(0),
+            0 => Ok(self.0.age()),
             _ => Err(()),
         }
     }
@@ -52,8 +65,12 @@ impl QueryCapability for GetUserAge {
 #[allow(non_snake_case)]
 #[component]
 fn User(id: usize) -> Element {
-    let user_name = use_query(Query::new(id, GetUserName));
-    let user_age = use_query(Query::new(id, GetUserAge).stale_time(Duration::from_secs(4)));
+    let fancy_client = FancyClient;
+
+    let user_name = use_query(Query::new(id, GetUserName(Captured(fancy_client.clone()))));
+    let user_age = use_query(
+        Query::new(id, GetUserAge(Captured(fancy_client))).stale_time(Duration::from_secs(4)),
+    );
 
     println!("Rendering user {id}");
 

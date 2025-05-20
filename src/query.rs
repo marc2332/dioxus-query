@@ -5,6 +5,7 @@ use std::{
     future::Future,
     hash::Hash,
     mem,
+    ops::Deref,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -354,4 +355,19 @@ pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
     });
 
     UseQuery { query }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct Captured<T: Clone + PartialEq + Eq>(pub T);
+
+impl<T: Clone + PartialEq + Eq> Hash for Captured<T> {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
+}
+
+impl<T: Clone + PartialEq + Eq> Deref for Captured<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
