@@ -334,9 +334,19 @@ pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
 
     let scope_id = current_scope_id().unwrap();
 
+    let current_query = use_hook(|| Rc::new(RefCell::new(None)));
+
     // Create or update query subscrition on changes
     use_memo(use_reactive!(|query| {
         let data = storage.insert_subscription(query.clone(), scope_id);
+
+        // Remove the current query subscription if any
+        if let Some(prev_query) = current_query.borrow_mut().take() {
+            storage.remove_subscription(prev_query, scope_id);
+        }
+
+        // Store this new query
+        current_query.borrow_mut().replace(query.clone());
 
         // Immediately run the query if the value is stale
         if data.state.borrow().is_stale(&query) {
