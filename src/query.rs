@@ -18,6 +18,7 @@ use dioxus_lib::{
     hooks::{use_memo, use_reactive},
     signals::CopyValue,
 };
+use futures_util::stream::{FuturesUnordered, StreamExt};
 
 pub trait QueryCapability
 where
@@ -246,7 +247,9 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
     }
 
     async fn run_queries(queries: &[(Query<Q>, QueryData<Q>)]) {
+        let tasks = FuturesUnordered::new();
         let cb = schedule_update_any();
+
         for (query, data) in queries {
             // Set to Loading
             let res =
@@ -256,16 +259,21 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
                 cb(*scope_id)
             }
 
-            // Run and set to fulfilled
-            let res = query.query.run(&query.keys).await;
-            *data.state.borrow_mut() = QueryStateData::Fulfilled {
-                res,
-                fullfilement_stamp: Instant::now(),
-            };
-            for scope_id in &data.scopes {
-                cb(*scope_id)
-            }
+            let cb = cb.clone();
+            tasks.push(Box::pin(async move {
+                // Run and set to fulfilled
+                let res = query.query.run(&query.keys).await;
+                *data.state.borrow_mut() = QueryStateData::Fulfilled {
+                    res,
+                    fullfilement_stamp: Instant::now(),
+                };
+                for scope_id in &data.scopes {
+                    cb(*scope_id)
+                }
+            }));
         }
+
+        tasks.count().await;
     }
 }
 
