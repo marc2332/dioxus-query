@@ -141,7 +141,7 @@ impl<T, E, K> Query<T, E, K> {
 
     /// Set the revalidation interval for the query.
     /// The query will be automatically refetched at this interval.
-    pub fn revalidate(mut self, interval: Duration) -> Self {
+    pub fn interval(mut self, interval: Duration) -> Self {
         self.revalidate_interval = Some(interval);
         self
     }
