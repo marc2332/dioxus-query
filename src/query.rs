@@ -7,7 +7,6 @@ use std::{
     mem,
     ops::Deref,
     rc::Rc,
-    time::{Duration, Instant},
 };
 
 use dioxus_lib::hooks::to_owned;
@@ -19,6 +18,7 @@ use dioxus_lib::{
     signals::CopyValue,
 };
 use futures_util::stream::{FuturesUnordered, StreamExt};
+use web_time::{Duration, Instant};
 
 pub trait QueryCapability
 where

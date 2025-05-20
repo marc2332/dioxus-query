@@ -14,8 +14,8 @@ categories = ["gui", "asynchronous"]
 [dependencies]
 dioxus-lib = { version = "0.6", default-features = false, features = ["macro", "hooks", "signals"] }
 futures-util = "0.3.28"
-instant = { version = "0.1", features = ["wasm-bindgen"] }
 warnings = "0.2.1"
+web-time = "1.1.0"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = {version = "^1", features = ["time"]}
