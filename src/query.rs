@@ -178,7 +178,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         data.scopes.insert(scope_id);
 
         // Cancel clean task
-        if let Some(clean_task) = data.clean_task {
+        if let Some(clean_task) = data.clean_task.take() {
             clean_task.cancel();
         }
 
@@ -195,7 +195,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
 
         // Spawn clean up task if there no more scopes
         if query_data.scopes.is_empty() {
-            query_data.clean_task = Some(spawn(async move {
+            query_data.clean_task = spawn_forever(async move {
                 // Wait as long as the stale time is configured
                 #[cfg(not(target_family = "wasm"))]
                 tokio::time::sleep(query.stale_time).await;
@@ -205,7 +205,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
                 // Finally clear the query
                 let mut storage = storage_clone.write();
                 storage.remove(&query);
-            }));
+            });
         }
     }
 
