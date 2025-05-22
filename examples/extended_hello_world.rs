@@ -69,7 +69,8 @@ fn User(id: usize) -> Element {
 
     let user_name = use_query(
         Query::new(id, GetUserName(Captured(fancy_client.clone())))
-            .stale_time(Duration::from_secs(10)),
+            .stale_time(Duration::from_secs(5))
+            .interval_time(Duration::from_secs(15)),
     );
     let user_age = use_query(
         Query::new(id, GetUserAge(Captured(fancy_client))).stale_time(Duration::from_secs(10)),

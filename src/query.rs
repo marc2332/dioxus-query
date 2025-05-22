@@ -5,11 +5,9 @@ use std::{
     future::Future,
     hash::Hash,
     mem,
-    ops::Deref,
     rc::Rc,
 };
 
-use dioxus_lib::hooks::to_owned;
 use dioxus_lib::prelude::Task;
 use dioxus_lib::prelude::*;
 use dioxus_lib::signals::{Readable, Writable};
@@ -35,27 +33,29 @@ where
     }
 }
 
-// TODO: CONSIDER QueryState to be put inside and this being a struct
 pub enum QueryStateData<Q: QueryCapability> {
     /// Has not loaded yet.
     Pending,
-    /// Is loading and may not have a previous fulfilled value.
+    /// Is loading and may not have a previous settled value.
     Loading { res: Option<Result<Q::Ok, Q::Err>> },
-    /// Is not loading and has a fulfilled value.
-    Fulfilled {
+    /// Is not loading and has a settled value.
+    Settled {
         res: Result<Q::Ok, Q::Err>,
-        fullfilement_stamp: Instant,
+        settlement_instant: Instant,
     },
 }
 
-// pub enum QueryState<'a, Q: QueryCapability> {
-//     /// Has not loaded yet.
-//     Pending,
-//     /// Is loading and may not have a previous fulfilled value.
-//     Loading(&'a Option<Result<Q::Ok, Q::Err>>),
-//     /// Is not loading and has a fulfilled value.
-//     Fulfilled(&'a Result<Q::Ok, Q::Err>),
-// }
+impl<Q: QueryCapability> TryFrom<QueryStateData<Q>> for Result<Q::Ok, Q::Err> {
+    type Error = ();
+
+    fn try_from(value: QueryStateData<Q>) -> Result<Self, Self::Error> {
+        match value {
+            QueryStateData::Loading { res: Some(res) } => Ok(res),
+            QueryStateData::Settled { res, .. } => Ok(res),
+            _ => Err(()),
+        }
+    }
+}
 
 impl<Q> fmt::Debug for QueryStateData<Q>
 where
@@ -67,20 +67,20 @@ where
         match self {
             Self::Pending => f.write_str("Pending"),
             Self::Loading { res } => write!(f, "Loading {{ {res:?} }}"),
-            Self::Fulfilled { res, .. } => write!(f, "Fulfilled {{ {res:?} }}"),
+            Self::Settled { res, .. } => write!(f, "Settled {{ {res:?} }}"),
         }
     }
 }
 
 impl<Q: QueryCapability> QueryStateData<Q> {
-    /// Check if the state is [QueryStateData::Fulfilled] and [Result::Ok].
+    /// Check if the state is [QueryStateData::Settled] and [Result::Ok].
     pub fn is_ok(&self) -> bool {
-        matches!(self, QueryStateData::Fulfilled { res: Ok(_), .. })
+        matches!(self, QueryStateData::Settled { res: Ok(_), .. })
     }
 
-    /// Check if the state is [QueryStateData::Fulfilled] and [Result::Err].
+    /// Check if the state is [QueryStateData::Settled] and [Result::Err].
     pub fn is_err(&self) -> bool {
-        matches!(self, QueryStateData::Fulfilled { res: Err(_), .. })
+        matches!(self, QueryStateData::Settled { res: Err(_), .. })
     }
 
     /// Check if the state is [QueryStateData::Loading].
@@ -98,16 +98,16 @@ impl<Q: QueryCapability> QueryStateData<Q> {
         match self {
             QueryStateData::Pending => true,
             QueryStateData::Loading { .. } => false,
-            QueryStateData::Fulfilled {
-                fullfilement_stamp, ..
-            } => Instant::now().duration_since(*fullfilement_stamp) >= query.stale_time,
+            QueryStateData::Settled {
+                settlement_instant, ..
+            } => Instant::now().duration_since(*settlement_instant) >= query.stale_time,
         }
     }
 
     /// Get the value as an [Option].
     pub fn ok(&self) -> Option<&Q::Ok> {
         match self {
-            Self::Fulfilled { res: Ok(res), .. } => Some(res),
+            Self::Settled { res: Ok(res), .. } => Some(res),
             Self::Loading { res: Some(Ok(res)) } => Some(res),
             _ => None,
         }
@@ -117,7 +117,7 @@ impl<Q: QueryCapability> QueryStateData<Q> {
     pub fn unwrap(&self) -> &Result<Q::Ok, Q::Err> {
         match self {
             Self::Loading { res: Some(v) } => v,
-            Self::Fulfilled { res, .. } => res,
+            Self::Settled { res, .. } => res,
             _ => unreachable!(),
         }
     }
@@ -126,7 +126,7 @@ impl<Q: QueryCapability> QueryStateData<Q> {
         match self {
             QueryStateData::Pending => QueryStateData::Loading { res: None },
             QueryStateData::Loading { res } => QueryStateData::Loading { res },
-            QueryStateData::Fulfilled { res, .. } => QueryStateData::Loading { res: Some(res) },
+            QueryStateData::Settled { res, .. } => QueryStateData::Loading { res: Some(res) },
         }
     }
 }
@@ -144,8 +144,9 @@ impl<Q: QueryCapability> Clone for QueriesStorage<Q> {
 
 pub struct QueryData<Q: QueryCapability> {
     state: Rc<RefCell<QueryStateData<Q>>>,
-    scopes: HashSet<ScopeId>,
+    scopes: Rc<RefCell<HashSet<ScopeId>>>,
 
+    inteval_task: Option<Task>,
     clean_task: Option<Task>,
 }
 
@@ -154,6 +155,8 @@ impl<Q: QueryCapability> Clone for QueryData<Q> {
         Self {
             state: self.state.clone(),
             scopes: self.scopes.clone(),
+
+            inteval_task: self.inteval_task,
             clean_task: self.clean_task,
         }
     }
@@ -167,22 +170,43 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
     }
 
     fn insert_subscription(&mut self, query: Query<Q>, scope_id: ScopeId) -> QueryData<Q> {
+        let mut self_clone = *self;
+        let query_clone = query.clone();
         let mut storage = self.storage.write();
-        let data = storage.entry(query).or_insert_with(|| QueryData {
+
+        let query_data = storage.entry(query).or_insert_with(|| QueryData {
             state: Rc::new(RefCell::new(QueryStateData::Pending)),
-            scopes: HashSet::new(),
+            scopes: Rc::default(),
+            inteval_task: None,
             clean_task: None,
         });
+        let query_data_clone = query_data.clone();
 
         // Subscribe scope
-        data.scopes.insert(scope_id);
+        query_data.scopes.borrow_mut().insert(scope_id);
 
         // Cancel clean task
-        if let Some(clean_task) = data.clean_task.take() {
+        if let Some(clean_task) = query_data.clean_task.take() {
             clean_task.cancel();
         }
 
-        data.clone()
+        // Start an interval task if necessary
+        if query_data.inteval_task.is_none() && query_clone.interval_time != Duration::MAX {
+            query_data.clean_task = spawn_forever(async move {
+                loop {
+                    // Wait as long as the stale time is configured
+                    #[cfg(not(target_family = "wasm"))]
+                    tokio::time::sleep(query_clone.interval_time).await;
+                    #[cfg(target_family = "wasm")]
+                    wasmtimer::tokio::sleep(query_clone.interval_time).await;
+
+                    // Run the query
+                    self_clone.run(&query_clone, &query_data_clone).await;
+                }
+            });
+        }
+
+        query_data.clone()
     }
 
     fn remove_subscription(&mut self, query: Query<Q>, scope_id: ScopeId) {
@@ -191,16 +215,21 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
 
         // Remove scope
         let query_data = storage.get_mut(&query).unwrap();
-        query_data.scopes.remove(&scope_id);
+        query_data.scopes.borrow_mut().remove(&scope_id);
+
+        // Cancel interval task
+        if let Some(inteval_task) = query_data.inteval_task.take() {
+            inteval_task.cancel();
+        }
 
         // Spawn clean up task if there no more scopes
-        if query_data.scopes.is_empty() {
+        if query_data.scopes.borrow().is_empty() {
             query_data.clean_task = spawn_forever(async move {
                 // Wait as long as the stale time is configured
                 #[cfg(not(target_family = "wasm"))]
-                tokio::time::sleep(query.stale_time).await;
+                tokio::time::sleep(query.clean_time).await;
                 #[cfg(target_family = "wasm")]
-                wasmtimer::tokio::sleep(query.stale_time).await;
+                wasmtimer::tokio::sleep(query.clean_time).await;
 
                 // Finally clear the query
                 let mut storage = storage_clone.write();
@@ -209,17 +238,27 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         }
     }
 
-    async fn run(&mut self, query: &Query<Q>, data: QueryData<Q>) {
-        let res = query.query.run(&query.keys).await;
-        *data.state.borrow_mut() = QueryStateData::Fulfilled {
-            res,
-            fullfilement_stamp: Instant::now(),
-        };
-
-        // TODO: Possible issue, what if the data scopes is too outdated at this point
+    async fn run(&mut self, query: &Query<Q>, query_data: &QueryData<Q>) {
         let cb = schedule_update_any();
-        for scope_id in data.scopes {
-            cb(scope_id)
+
+        // Set to Loading
+        let res = mem::replace(&mut *query_data.state.borrow_mut(), QueryStateData::Pending)
+            .into_loading();
+        *query_data.state.borrow_mut() = res;
+        for scope_id in query_data.scopes.borrow().iter() {
+            cb(*scope_id)
+        }
+
+        // Run
+        let res = query.query.run(&query.keys).await;
+
+        // Set to Settled
+        *query_data.state.borrow_mut() = QueryStateData::Settled {
+            res,
+            settlement_instant: Instant::now(),
+        };
+        for scope_id in query_data.scopes.borrow().iter() {
+            cb(*scope_id)
         }
     }
 
@@ -262,19 +301,21 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             let res =
                 mem::replace(&mut *data.state.borrow_mut(), QueryStateData::Pending).into_loading();
             *data.state.borrow_mut() = res;
-            for scope_id in &data.scopes {
+            for scope_id in data.scopes.borrow().iter() {
                 cb(*scope_id)
             }
 
             let cb = cb.clone();
             tasks.push(Box::pin(async move {
-                // Run and set to fulfilled
+                // Run
                 let res = query.query.run(&query.keys).await;
-                *data.state.borrow_mut() = QueryStateData::Fulfilled {
+
+                // Set to settled
+                *data.state.borrow_mut() = QueryStateData::Settled {
                     res,
-                    fullfilement_stamp: Instant::now(),
+                    settlement_instant: Instant::now(),
                 };
-                for scope_id in &data.scopes {
+                for scope_id in data.scopes.borrow().iter() {
                     cb(*scope_id)
                 }
             }));
@@ -289,14 +330,24 @@ pub struct Query<Q: QueryCapability> {
     query: Q,
     keys: Q::Keys,
 
+    enabled: bool,
+
     stale_time: Duration,
+    clean_time: Duration,
+    interval_time: Duration,
 }
 
 impl<Q: QueryCapability> Eq for Query<Q> {}
 impl<Q: QueryCapability> Hash for Query<Q> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.query.hash(state);
-        self.query.hash(state);
+        self.keys.hash(state);
+
+        self.enabled.hash(state);
+
+        self.stale_time.hash(state);
+        self.clean_time.hash(state);
+        self.interval_time.hash(state);
     }
 }
 
@@ -305,12 +356,40 @@ impl<Q: QueryCapability> Query<Q> {
         Self {
             query,
             keys,
+            enabled: true,
             stale_time: Duration::ZERO,
+            clean_time: Duration::ZERO,
+            interval_time: Duration::MAX,
         }
     }
 
+    /// Enable or disable this query so that it doesnt automatically run.
+    pub fn enable(self, enabled: bool) -> Self {
+        Self { enabled, ..self }
+    }
+
+    /// For how long is the data considered stale. If a query subscriber is mounted and the data is stale, it will re run the query.
+    ///
+    /// Defaults to [Duration::ZERO], meaning it is marked stale immediately.
     pub fn stale_time(self, stale_time: Duration) -> Self {
         Self { stale_time, ..self }
+    }
+
+    /// For how long the data is kept cached after there are no more query subscribers.
+    ///
+    /// Defaults to [Duration::ZERO], meaning it clears automatically.
+    pub fn clean_time(self, clean_time: Duration) -> Self {
+        Self { clean_time, ..self }
+    }
+
+    /// Every how often the query reruns.
+    ///
+    /// Defaults to [Duration::MAX], meaning it never re runs automatically.
+    pub fn interval_time(self, interval_time: Duration) -> Self {
+        Self {
+            interval_time,
+            ..self
+        }
     }
 }
 
@@ -325,8 +404,16 @@ impl<Q: QueryCapability> QueryReader<Q> {
 }
 
 pub struct UseQuery<Q: QueryCapability> {
-    query: Query<Q>,
+    query: Memo<Query<Q>>,
 }
+
+impl<Q: QueryCapability> Clone for UseQuery<Q> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Q: QueryCapability> Copy for UseQuery<Q> {}
 
 impl<Q: QueryCapability> UseQuery<Q> {
     pub fn read(&self) -> QueryReader<Q> {
@@ -334,7 +421,7 @@ impl<Q: QueryCapability> UseQuery<Q> {
         let state = storage
             .storage
             .peek_unchecked()
-            .get(&self.query)
+            .get(&self.query.peek())
             .cloned()
             .unwrap();
         QueryReader { state: state.state }
@@ -351,8 +438,8 @@ pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
 
     let current_query = use_hook(|| Rc::new(RefCell::new(None)));
 
-    // Create or update query subscrition on changes
-    use_memo(use_reactive!(|query| {
+    // Create or update query subscription on changes
+    let query = use_memo(use_reactive!(|query| {
         let data = storage.insert_subscription(query.clone(), scope_id);
 
         // Remove the current query subscription if any
@@ -363,49 +450,23 @@ pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
         // Store this new query
         current_query.borrow_mut().replace(query.clone());
 
-        // Immediately run the query if the value is stale
-        if data.state.borrow().is_stale(&query) {
+        // Immediately run the query if enabled and the value is stale
+        if query.enabled && data.state.borrow().is_stale(&query) {
+            let query = query.clone();
             spawn(async move {
-                storage.run(&query, data).await;
+                storage.run(&query, &data).await;
             });
         }
+
+        query
     }));
 
     // Remove query subscription on scope drop
     use_drop({
-        to_owned![query];
         move || {
-            storage.remove_subscription(query, scope_id);
+            storage.remove_subscription(query.peek().clone(), scope_id);
         }
     });
 
     UseQuery { query }
-}
-
-/// Capture values to use later inside Queries, but with a catch, if the capture value changes the query wont recapture it because
-/// the [PartialEq] implementation always returns false.
-///
-/// So in other words `Capture(1) == Capture(1)` will be `false`.
-///
-/// **This is intended to use for value types that are not mean to be diffed and that are expected to maintain their value across time.
-/// Like "Clients" of external resources.**
-#[derive(Clone)]
-pub struct Captured<T: Clone>(pub T);
-
-impl<T: Clone> Hash for Captured<T> {
-    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
-}
-
-impl<T: Clone> PartialEq for Captured<T> {
-    fn eq(&self, _other: &Self) -> bool {
-        false
-    }
-}
-
-impl<T: Clone> Deref for Captured<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
 }

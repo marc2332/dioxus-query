@@ -20,10 +20,6 @@ impl FancyClient {
     pub fn name(&self) -> &'static str {
         "Marc"
     }
-
-    pub fn age(&self) -> u8 {
-        123
-    }
 }
 
 #[derive(Clone, PartialEq, Hash, Eq)]
@@ -44,46 +40,21 @@ impl QueryCapability for GetUserName {
     }
 }
 
-#[derive(Clone, PartialEq, Hash, Eq)]
-struct GetUserAge(Captured<FancyClient>);
-
-impl QueryCapability for GetUserAge {
-    type Ok = u8;
-    type Err = ();
-    type Keys = usize;
-
-    async fn run(&self, user_id: &Self::Keys) -> Result<Self::Ok, Self::Err> {
-        println!("Fetching age of user {user_id}");
-        sleep(Duration::from_millis(1000)).await;
-        match user_id {
-            0 => Ok(self.0.age()),
-            _ => Err(()),
-        }
-    }
-}
-
 #[allow(non_snake_case)]
 #[component]
 fn User(id: usize) -> Element {
-    let fancy_client = FancyClient;
-
-    let user_name = use_query(Query::new(id, GetUserName(Captured(fancy_client.clone()))));
-    let user_age = use_query(
-        Query::new(id, GetUserAge(Captured(fancy_client))).stale_time(Duration::from_secs(4)),
-    );
+    let user_name = use_query(Query::new(id, GetUserName(Captured(FancyClient))));
 
     println!("Rendering user {id}");
 
     rsx!(
         p { "{user_name.read().state():?}" }
-        p { "{user_age.read().state():?}" }
     )
 }
 
 fn app() -> Element {
     let refresh = move |_| async move {
         QueriesStorage::<GetUserName>::invalidate_matching(0).await;
-        QueriesStorage::<GetUserAge>::invalidate_matching(0).await;
     };
 
     rsx!(
