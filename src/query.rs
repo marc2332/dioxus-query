@@ -6,6 +6,7 @@ use std::{
     hash::Hash,
     mem,
     rc::Rc,
+    sync::Arc,
 };
 
 use dioxus_lib::prelude::Task;
@@ -16,6 +17,7 @@ use dioxus_lib::{
     signals::CopyValue,
 };
 use futures_util::stream::{FuturesUnordered, StreamExt};
+use tokio::sync::Notify;
 use web_time::{Duration, Instant};
 
 pub trait QueryCapability
@@ -142,10 +144,16 @@ impl<Q: QueryCapability> Clone for QueriesStorage<Q> {
     }
 }
 
+struct QuerySuspenseData {
+    notifier: Arc<Notify>,
+    task: Task,
+}
+
 pub struct QueryData<Q: QueryCapability> {
     state: Rc<RefCell<QueryStateData<Q>>>,
     scopes: Rc<RefCell<HashSet<ScopeId>>>,
 
+    suspense_task: Rc<RefCell<Option<QuerySuspenseData>>>,
     inteval_task: Option<Task>,
     clean_task: Option<Task>,
 }
@@ -156,6 +164,7 @@ impl<Q: QueryCapability> Clone for QueryData<Q> {
             state: self.state.clone(),
             scopes: self.scopes.clone(),
 
+            suspense_task: self.suspense_task.clone(),
             inteval_task: self.inteval_task,
             clean_task: self.clean_task,
         }
@@ -177,6 +186,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         let query_data = storage.entry(query).or_insert_with(|| QueryData {
             state: Rc::new(RefCell::new(QueryStateData::Pending)),
             scopes: Rc::default(),
+            suspense_task: Rc::default(),
             inteval_task: None,
             clean_task: None,
         });
@@ -259,6 +269,9 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         };
         for scope_id in query_data.scopes.borrow().iter() {
             cb(*scope_id)
+        }
+        if let Some(suspense_task) = &*query_data.suspense_task.borrow() {
+            suspense_task.notifier.notify_waiters();
         }
     }
 
@@ -418,13 +431,45 @@ impl<Q: QueryCapability> Copy for UseQuery<Q> {}
 impl<Q: QueryCapability> UseQuery<Q> {
     pub fn read(&self) -> QueryReader<Q> {
         let storage = consume_context::<QueriesStorage<Q>>();
-        let state = storage
+        let data = storage
             .storage
             .peek_unchecked()
             .get(&self.query.peek())
             .cloned()
             .unwrap();
-        QueryReader { state: state.state }
+        QueryReader { state: data.state }
+    }
+
+    pub fn suspend(&self) -> Result<Result<Q::Ok, Q::Err>, RenderError>
+    where
+        Q::Ok: Clone,
+        Q::Err: Clone,
+    {
+        let storage = consume_context::<QueriesStorage<Q>>();
+        let mut storage = storage.storage.write_unchecked();
+        let data = storage.get_mut(&self.query.peek()).unwrap();
+        let state = &*data.state.borrow();
+        match state {
+            QueryStateData::Pending | QueryStateData::Loading { res: None } => {
+                let suspense_task_clone = data.suspense_task.clone();
+                let mut suspense_task = data.suspense_task.borrow_mut();
+                let QuerySuspenseData { task, .. } = suspense_task.get_or_insert_with(|| {
+                    let notifier = Arc::new(Notify::new());
+                    let task = spawn({
+                        let notifier = notifier.clone();
+                        async move {
+                            notifier.notified().await;
+                            let _ = suspense_task_clone.take();
+                        }
+                    });
+                    QuerySuspenseData { notifier, task }
+                });
+                Err(RenderError::Suspended(SuspendedFuture::new(*task)))
+            }
+            QueryStateData::Settled { res, .. } | QueryStateData::Loading { res: Some(res) } => {
+                Ok(res.clone())
+            }
+        }
     }
 }
 
