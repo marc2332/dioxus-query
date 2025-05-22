@@ -16,12 +16,7 @@ dioxus-lib = { version = "0.6", default-features = false, features = ["macro", "
 futures-util = "0.3.28"
 warnings = "0.2.1"
 web-time = "1.1.0"
-
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
-tokio = {version = "^1", features = ["time", "sync"] }
-
-[target.'cfg(target_family = "wasm")'.dependencies]
-wasmtimer = "0.4.1"
+tokio = { version = "^1", features = ["sync", "time"] }
 
 [dev-dependencies]
 dioxus = { version = "0.6", features = ["desktop"] }
