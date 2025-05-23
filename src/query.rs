@@ -594,6 +594,43 @@ impl<Q: QueryCapability> UseQuery<Q> {
             }
         }
     }
+
+    /// Invalidate this query and await its result.
+    ///
+    /// For a `sync` version use [Self::invalidate].
+    pub async fn invalidate_async(&self) -> QueryReader<Q> {
+        let storage = consume_context::<QueriesStorage<Q>>();
+        let data = storage
+            .storage
+            .peek_unchecked()
+            .get(&self.query.peek())
+            .cloned()
+            .unwrap();
+
+        // Invalidate the query
+        QueriesStorage::run_queries(&[(self.query.peek().clone(), data.clone())]).await;
+
+        QueryReader {
+            state: data.state.clone(),
+        }
+    }
+
+    /// Invalidate this query in the background.
+    ///
+    /// For an `async` version use [Self::invalidate_async].
+    pub fn invalidate(&self) {
+        let storage = consume_context::<QueriesStorage<Q>>();
+        let query_data = storage
+            .storage
+            .peek_unchecked()
+            .get(&self.query.peek())
+            .cloned()
+            .unwrap();
+        let query = self.query.peek().clone();
+
+        // Invalidate the query
+        spawn(async move { QueriesStorage::run_queries(&[(query, query_data)]).await });
+    }
 }
 
 pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
