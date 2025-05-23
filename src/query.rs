@@ -559,6 +559,7 @@ impl<Q: QueryCapability> UseQuery<Q> {
         QueryReader { state: data.state }
     }
 
+    /// Suspend this query until it has been **settled**.
     pub fn suspend(&self) -> Result<Result<Q::Ok, Q::Err>, RenderError>
     where
         Q::Ok: Clone,
@@ -578,7 +579,7 @@ impl<Q: QueryCapability> UseQuery<Q> {
                         let notifier = notifier.clone();
                         async move {
                             notifier.notified().await;
-                            let _ = suspense_task_clone.take();
+                            let _ = suspense_task_clone.borrow_mut().take();
                         }
                     });
                     QuerySuspenseData { notifier, task }
