@@ -194,7 +194,7 @@ impl<Q: MutationCapability> MutationsStorage<Q> {
         }
     }
 
-    async fn run(&mut self, mutation: &Mutation<Q>, data: &MutationData<Q>) {
+    async fn run(mutation: &Mutation<Q>, data: &MutationData<Q>) {
         let cb = schedule_update_any();
 
         // Set to Loading
@@ -287,16 +287,46 @@ impl<Q: MutationCapability> UseMutation<Q> {
         MutationReader { state: state.state }
     }
 
+    /// Run this mutation await its result.
+    ///
+    /// For a `sync` version use [UseMutation::mutate].
     pub async fn mutate_async(&self) -> MutationReader<Q> {
-        let mut storage = consume_context::<MutationsStorage<Q>>();
-        let data = storage
+        let storage = consume_context::<MutationsStorage<Q>>();
+
+        let mutation = self.mutation.peek().clone();
+        let mutation_data = storage
             .storage
             .peek_unchecked()
-            .get(&self.mutation.peek())
+            .get(&mutation)
             .cloned()
             .unwrap();
-        storage.run(&self.mutation.peek(), &data).await;
-        MutationReader { state: data.state }
+
+        // Run the mutation
+        MutationsStorage::run(&mutation, &mutation_data).await;
+
+        MutationReader {
+            state: mutation_data.state,
+        }
+    }
+
+    // Run this mutation and await its result.
+    ///
+    /// For an `async` version use [UseMutation::mutate_async].
+    pub fn mutate(&self) {
+        let storage = consume_context::<MutationsStorage<Q>>();
+
+        let mutation = self.mutation.peek().clone();
+        let mutation_data = storage
+            .storage
+            .peek_unchecked()
+            .get(&mutation)
+            .cloned()
+            .unwrap();
+
+        // Run the mutation
+        spawn(async move {
+            MutationsStorage::run(&mutation, &mutation_data).await;
+        });
     }
 }
 

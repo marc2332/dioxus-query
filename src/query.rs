@@ -179,7 +179,6 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
     }
 
     fn insert_subscription(&mut self, query: Query<Q>, scope_id: ScopeId) -> QueryData<Q> {
-        let mut self_clone = *self;
         let query_clone = query.clone();
         let mut storage = self.storage.write();
 
@@ -211,7 +210,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
                     tokio::time::sleep(query_clone.interval_time).await;
 
                     // Run the query
-                    self_clone.run(&query_clone, &query_data_clone).await;
+                    QueriesStorage::<Q>::run_queries(&[(&query_clone, &query_data_clone)]).await;
                 }
             });
         }
@@ -312,33 +311,6 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         }
     }
 
-    async fn run(&mut self, query: &Query<Q>, query_data: &QueryData<Q>) {
-        let cb = schedule_update_any();
-
-        // Set to Loading
-        let res = mem::replace(&mut *query_data.state.borrow_mut(), QueryStateData::Pending)
-            .into_loading();
-        *query_data.state.borrow_mut() = res;
-        for scope_id in query_data.scopes.borrow().iter() {
-            cb(*scope_id)
-        }
-
-        // Run
-        let res = query.query.run(&query.keys).await;
-
-        // Set to Settled
-        *query_data.state.borrow_mut() = QueryStateData::Settled {
-            res,
-            settlement_instant: Instant::now(),
-        };
-        for scope_id in query_data.scopes.borrow().iter() {
-            cb(*scope_id)
-        }
-        if let Some(suspense_task) = &*query_data.suspense_task.borrow() {
-            suspense_task.notifier.notify_waiters();
-        }
-    }
-
     pub async fn invalidate_all() {
         let storage = consume_context::<QueriesStorage<Q>>();
 
@@ -348,6 +320,10 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             .read()
             .clone()
             .into_iter()
+            .collect::<Vec<_>>();
+        let matching_queries = matching_queries
+            .iter()
+            .map(|(q, d)| (q, d))
             .collect::<Vec<_>>();
 
         // Invalidate the queries
@@ -364,12 +340,16 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
                 matching_queries.push((query.clone(), data.clone()));
             }
         }
+        let matching_queries = matching_queries
+            .iter()
+            .map(|(q, d)| (q, d))
+            .collect::<Vec<_>>();
 
         // Invalidate the queries
         Self::run_queries(&matching_queries).await
     }
 
-    async fn run_queries(queries: &[(Query<Q>, QueryData<Q>)]) {
+    async fn run_queries(queries: &[(&Query<Q>, &QueryData<Q>)]) {
         let tasks = FuturesUnordered::new();
         let cb = schedule_update_any();
 
@@ -553,13 +533,15 @@ impl<Q: QueryCapability> Copy for UseQuery<Q> {}
 impl<Q: QueryCapability> UseQuery<Q> {
     pub fn read(&self) -> QueryReader<Q> {
         let storage = consume_context::<QueriesStorage<Q>>();
-        let data = storage
+        let query_data = storage
             .storage
             .peek_unchecked()
             .get(&self.query.peek())
             .cloned()
             .unwrap();
-        QueryReader { state: data.state }
+        QueryReader {
+            state: query_data.state,
+        }
     }
 
     /// Suspend this query until it has been **settled**.
@@ -570,12 +552,12 @@ impl<Q: QueryCapability> UseQuery<Q> {
     {
         let storage = consume_context::<QueriesStorage<Q>>();
         let mut storage = storage.storage.write_unchecked();
-        let data = storage.get_mut(&self.query.peek()).unwrap();
-        let state = &*data.state.borrow();
+        let query_data = storage.get_mut(&self.query.peek()).unwrap();
+        let state = &*query_data.state.borrow();
         match state {
             QueryStateData::Pending | QueryStateData::Loading { res: None } => {
-                let suspense_task_clone = data.suspense_task.clone();
-                let mut suspense_task = data.suspense_task.borrow_mut();
+                let suspense_task_clone = query_data.suspense_task.clone();
+                let mut suspense_task = query_data.suspense_task.borrow_mut();
                 let QuerySuspenseData { task, .. } = suspense_task.get_or_insert_with(|| {
                     let notifier = Arc::new(Notify::new());
                     let task = spawn({
@@ -597,39 +579,42 @@ impl<Q: QueryCapability> UseQuery<Q> {
 
     /// Invalidate this query and await its result.
     ///
-    /// For a `sync` version use [Self::invalidate].
+    /// For a `sync` version use [UseQuery::invalidate].
     pub async fn invalidate_async(&self) -> QueryReader<Q> {
         let storage = consume_context::<QueriesStorage<Q>>();
-        let data = storage
+
+        let query = self.query.peek().clone();
+        let query_data = storage
             .storage
             .peek_unchecked()
-            .get(&self.query.peek())
+            .get(&query)
             .cloned()
             .unwrap();
 
-        // Invalidate the query
-        QueriesStorage::run_queries(&[(self.query.peek().clone(), data.clone())]).await;
+        // Run the query
+        QueriesStorage::run_queries(&[(&query, &query_data)]).await;
 
         QueryReader {
-            state: data.state.clone(),
+            state: query_data.state.clone(),
         }
     }
 
     /// Invalidate this query in the background.
     ///
-    /// For an `async` version use [Self::invalidate_async].
+    /// For an `async` version use [UseQuery::invalidate_async].
     pub fn invalidate(&self) {
         let storage = consume_context::<QueriesStorage<Q>>();
+
+        let query = self.query.peek().clone();
         let query_data = storage
             .storage
             .peek_unchecked()
-            .get(&self.query.peek())
+            .get(&query)
             .cloned()
             .unwrap();
-        let query = self.query.peek().clone();
 
-        // Invalidate the query
-        spawn(async move { QueriesStorage::run_queries(&[(query, query_data)]).await });
+        // Run the query
+        spawn(async move { QueriesStorage::run_queries(&[(&query, &query_data)]).await });
     }
 }
 
@@ -645,7 +630,7 @@ pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
 
     // Create or update query subscription on changes
     let query = use_memo(use_reactive!(|query| {
-        let data = storage.insert_subscription(query.clone(), scope_id);
+        let query_data = storage.insert_subscription(query.clone(), scope_id);
 
         // Remove the current query subscription if any
         if let Some(prev_query) = current_query.borrow_mut().take() {
@@ -656,10 +641,10 @@ pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
         current_query.borrow_mut().replace(query.clone());
 
         // Immediately run the query if enabled and the value is stale
-        if query.enabled && data.state.borrow().is_stale(&query) {
+        if query.enabled && query_data.state.borrow().is_stale(&query) {
             let query = query.clone();
             spawn(async move {
-                storage.run(&query, &data).await;
+                QueriesStorage::run_queries(&[(&query, &query_data)]).await;
             });
         }
 

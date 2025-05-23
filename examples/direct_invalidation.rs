@@ -4,8 +4,7 @@
 )]
 
 use dioxus_query::prelude::*;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::time::sleep;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use dioxus::prelude::*;
 
@@ -22,7 +21,6 @@ impl QueryCapability for GetTime {
     type Keys = ();
 
     async fn run(&self, _: &Self::Keys) -> Result<Self::Ok, Self::Err> {
-        sleep(Duration::from_millis(250)).await;
         Ok(SystemTime::now())
     }
 }
