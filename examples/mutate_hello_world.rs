@@ -95,10 +95,10 @@ fn User(id: usize) -> Element {
 fn app() -> Element {
     let fancy_client = use_context_provider(FancyClient::default);
 
-    let set_user_age = use_mutation(Mutation::new(0, SetUserAge(Captured(fancy_client))));
+    let set_user_age = use_mutation(Mutation::new(SetUserAge(Captured(fancy_client))));
 
     let increase_age = move |_| async move {
-        set_user_age.mutate_async().await;
+        set_user_age.mutate_async(0).await;
     };
 
     rsx!(
