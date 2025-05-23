@@ -7,6 +7,7 @@ use std::{
     mem,
     rc::Rc,
     sync::Arc,
+    time::Duration,
 };
 
 use dioxus_lib::prelude::Task;
@@ -17,8 +18,7 @@ use dioxus_lib::{
     signals::CopyValue,
 };
 use futures_util::stream::{FuturesUnordered, StreamExt};
-use tokio::sync::Notify;
-use web_time::{Duration, Instant};
+use tokio::{sync::Notify, time::Instant};
 
 pub trait QueryCapability
 where
@@ -463,7 +463,7 @@ impl<Q: QueryCapability> Query<Q> {
             keys,
             enabled: true,
             stale_time: Duration::ZERO,
-            clean_time: Duration::ZERO,
+            clean_time: Duration::from_secs(5 * 60),
             interval_time: Duration::MAX,
         }
     }
@@ -482,7 +482,7 @@ impl<Q: QueryCapability> Query<Q> {
 
     /// For how long the data is kept cached after there are no more query subscribers.
     ///
-    /// Defaults to [Duration::ZERO], meaning it clears automatically.
+    /// Defaults to `5min`, meaning it clears automatically after 5 minutes of no subscribers to it.
     pub fn clean_time(self, clean_time: Duration) -> Self {
         Self { clean_time, ..self }
     }
@@ -635,10 +635,8 @@ impl<Q: QueryCapability> UseQuery<Q> {
 /// This is how long will a value kept cached after there are no more subscribers of that query.
 ///
 /// Imagine there is `Subscriber 1` of a query, the data is requested and cached.
-/// But after some seconds the `Subscriber 1` is unmounted, and so the data is cleared due to the default clean time of `0ms`
-/// Again, just a few seconds later it gets mounted again, and this time it gets the data again as there is nothing cached.
-///
-/// We can use a custom clean time so that it so the data is not cleared instantly after the last subscriber gets unmounted.
+/// But after some seconds the `Subscriber 1` is unmounted, but the data is not cleared as the default clean time is `5min`.
+/// A few seconds later the `Subscriber 1` gets mounted again, it requests the data again but this time it is returned directly from the cache.
 ///
 /// See [Query::clean_time].
 ///

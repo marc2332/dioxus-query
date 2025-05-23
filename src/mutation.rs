@@ -6,16 +6,16 @@ use std::{
     hash::Hash,
     mem,
     rc::Rc,
+    time::Duration,
 };
 
-use dioxus_lib::prelude::Task;
 use dioxus_lib::prelude::*;
 use dioxus_lib::signals::{Readable, Writable};
 use dioxus_lib::{
     hooks::{use_memo, use_reactive},
     signals::CopyValue,
 };
-use web_time::{Duration, Instant};
+use tokio::time::Instant;
 
 pub trait MutationCapability
 where
@@ -182,10 +182,7 @@ impl<Q: MutationCapability> MutationsStorage<Q> {
         if mutation_data.scopes.borrow().is_empty() {
             mutation_data.clean_task = spawn_forever(async move {
                 // Wait as long as the stale time is configured
-                #[cfg(not(target_family = "wasm"))]
                 tokio::time::sleep(mutation.clean_time).await;
-                #[cfg(target_family = "wasm")]
-                wasmtimer::tokio::sleep(mutation.clean_time).await;
 
                 // Finally clear the mutation
                 let mut storage = storage_clone.write();
@@ -232,7 +229,7 @@ impl<Q: MutationCapability> Eq for Mutation<Q> {}
 impl<Q: MutationCapability> Hash for Mutation<Q> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.mutation.hash(state);
-        self.mutation.hash(state);
+        self.keys.hash(state);
     }
 }
 
