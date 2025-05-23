@@ -618,6 +618,35 @@ impl<Q: QueryCapability> UseQuery<Q> {
     }
 }
 
+/// Queries are used to get data asynchronously (e.g external resources such as HTTP APIs), which can later be cached or refreshed.
+///
+/// Important concepts:
+///
+/// ### Stale time
+/// This is how long will a value that is cached, considered to be recent enough.
+/// So in other words, if a value is stale it means that its outdated and therefore it should be refreshed.
+///
+/// By default the stale time is `0ms`, so if a value is cached and a new query subscriber
+/// is interested in this value, it will get refreshed automatically.
+///
+/// See [Query::stale_time].
+///
+/// ### Clean time
+/// This is how long will a value kept cached after there are no more subscribers of that query.
+///
+/// Imagine there is `Subscriber 1` of a query, the data is requested and cached.
+/// But after some seconds the `Subscriber 1` is unmounted, and so the data is cleared due to the default clean time of `0ms`
+/// Again, just a few seconds later it gets mounted again, and this time it gets the data again as there is nothing cached.
+///
+/// We can use a custom clean time so that it so the data is not cleared instantly after the last subscriber gets unmounted.
+///
+/// See [Query::clean_time].
+///
+/// /// ### Interval time
+/// This is how often do you want a query to be refreshed in the background automatically.
+/// By default it never refreshes automatically.
+///
+/// See [Query::interval_time].
 pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
     let mut storage = match try_consume_context::<QueriesStorage<Q>>() {
         Some(storage) => storage,
