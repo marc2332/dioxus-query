@@ -154,8 +154,8 @@ pub struct QueryData<Q: QueryCapability> {
     scopes: Rc<RefCell<HashSet<ScopeId>>>,
 
     suspense_task: Rc<RefCell<Option<QuerySuspenseData>>>,
-    inteval_task: Option<Task>,
-    clean_task: Option<Task>,
+    interval_task: Rc<RefCell<Option<Task>>>,
+    clean_task: Rc<RefCell<Option<Task>>>,
 }
 
 impl<Q: QueryCapability> Clone for QueryData<Q> {
@@ -165,8 +165,8 @@ impl<Q: QueryCapability> Clone for QueryData<Q> {
             scopes: self.scopes.clone(),
 
             suspense_task: self.suspense_task.clone(),
-            inteval_task: self.inteval_task,
-            clean_task: self.clean_task,
+            interval_task: self.interval_task.clone(),
+            clean_task: self.clean_task.clone(),
         }
     }
 }
@@ -187,8 +187,8 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             state: Rc::new(RefCell::new(QueryStateData::Pending)),
             scopes: Rc::default(),
             suspense_task: Rc::default(),
-            inteval_task: None,
-            clean_task: None,
+            interval_task: Rc::default(),
+            clean_task: Rc::default(),
         });
         let query_data_clone = query_data.clone();
 
@@ -201,14 +201,14 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         }
 
         // Start an interval task if necessary
-        if query_data.inteval_task.is_none() && query_clone.interval_time != Duration::MAX {
-            query_data.clean_task = spawn_forever(async move {
+        // If multiple queries subscribers use different intervals only the first one will get selected
+        // TODO: Use the shorter interval.
+        if query_data.interval_task.borrow().is_none() && query_clone.interval_time != Duration::MAX
+        {
+            *query_data.interval_task.borrow_mut() = spawn_forever(async move {
                 loop {
                     // Wait as long as the stale time is configured
-                    #[cfg(not(target_family = "wasm"))]
                     tokio::time::sleep(query_clone.interval_time).await;
-                    #[cfg(target_family = "wasm")]
-                    wasmtimer::tokio::sleep(query_clone.interval_time).await;
 
                     // Run the query
                     self_clone.run(&query_clone, &query_data_clone).await;
@@ -228,23 +228,84 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         query_data.scopes.borrow_mut().remove(&scope_id);
 
         // Cancel interval task
-        if let Some(inteval_task) = query_data.inteval_task.take() {
-            inteval_task.cancel();
+        if let Some(interval_task) = query_data.interval_task.take() {
+            interval_task.cancel();
         }
 
         // Spawn clean up task if there no more scopes
         if query_data.scopes.borrow().is_empty() {
-            query_data.clean_task = spawn_forever(async move {
+            *query_data.clean_task.borrow_mut() = spawn_forever(async move {
                 // Wait as long as the stale time is configured
-                #[cfg(not(target_family = "wasm"))]
                 tokio::time::sleep(query.clean_time).await;
-                #[cfg(target_family = "wasm")]
-                wasmtimer::tokio::sleep(query.clean_time).await;
 
                 // Finally clear the query
                 let mut storage = storage_clone.write();
                 storage.remove(&query);
             });
+        }
+    }
+
+    pub async fn get(get_query: GetQuery<Q>) -> QueryReader<Q> {
+        let query: Query<Q> = get_query.into();
+        let cb = schedule_update_any();
+
+        let mut storage = match try_consume_context::<QueriesStorage<Q>>() {
+            Some(storage) => storage,
+            None => provide_root_context(QueriesStorage::<Q>::new_in_root()),
+        };
+
+        let query_data = storage
+            .storage
+            .write()
+            .entry(query.clone())
+            .or_insert_with(|| QueryData {
+                state: Rc::new(RefCell::new(QueryStateData::Pending)),
+                scopes: Rc::default(),
+                suspense_task: Rc::default(),
+                interval_task: Rc::default(),
+                clean_task: Rc::default(),
+            })
+            .clone();
+
+        // Set to Loading
+        let res = mem::replace(&mut *query_data.state.borrow_mut(), QueryStateData::Pending)
+            .into_loading();
+        *query_data.state.borrow_mut() = res;
+        for scope_id in query_data.scopes.borrow().iter() {
+            cb(*scope_id)
+        }
+
+        // Run
+        let res = query.query.run(&query.keys).await;
+
+        // Set to Settled
+        *query_data.state.borrow_mut() = QueryStateData::Settled {
+            res,
+            settlement_instant: Instant::now(),
+        };
+        for scope_id in query_data.scopes.borrow().iter() {
+            cb(*scope_id)
+        }
+
+        // Notify the suspesen task if any
+        if let Some(suspense_task) = &*query_data.suspense_task.borrow() {
+            suspense_task.notifier.notify_waiters();
+        };
+
+        // Spawn clean up task if there no more scopes
+        if query_data.scopes.borrow().is_empty() {
+            *query_data.clean_task.borrow_mut() = spawn_forever(async move {
+                // Wait as long as the stale time is configured
+                tokio::time::sleep(query.clean_time).await;
+
+                // Finally clear the query
+                let mut storage = storage.storage.write();
+                storage.remove(&query);
+            });
+        }
+
+        QueryReader {
+            state: query_data.state,
         }
     }
 
@@ -338,6 +399,52 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
     }
 }
 
+pub struct GetQuery<Q: QueryCapability> {
+    query: Q,
+    keys: Q::Keys,
+
+    stale_time: Duration,
+    clean_time: Duration,
+}
+
+impl<Q: QueryCapability> GetQuery<Q> {
+    pub fn new(keys: Q::Keys, query: Q) -> Self {
+        Self {
+            query,
+            keys,
+            stale_time: Duration::ZERO,
+            clean_time: Duration::ZERO,
+        }
+    }
+    /// For how long is the data considered stale. If a query subscriber is mounted and the data is stale, it will re run the query.
+    ///
+    /// Defaults to [Duration::ZERO], meaning it is marked stale immediately.
+    pub fn stale_time(self, stale_time: Duration) -> Self {
+        Self { stale_time, ..self }
+    }
+
+    /// For how long the data is kept cached after there are no more query subscribers.
+    ///
+    /// Defaults to [Duration::ZERO], meaning it clears automatically.
+    pub fn clean_time(self, clean_time: Duration) -> Self {
+        Self { clean_time, ..self }
+    }
+}
+
+impl<Q: QueryCapability> From<GetQuery<Q>> for Query<Q> {
+    fn from(value: GetQuery<Q>) -> Self {
+        Query {
+            query: value.query,
+            keys: value.keys,
+
+            enabled: true,
+
+            stale_time: value.stale_time,
+            clean_time: value.clean_time,
+            interval_time: Duration::MAX,
+        }
+    }
+}
 #[derive(PartialEq, Clone)]
 pub struct Query<Q: QueryCapability> {
     query: Q,
@@ -360,7 +467,9 @@ impl<Q: QueryCapability> Hash for Query<Q> {
 
         self.stale_time.hash(state);
         self.clean_time.hash(state);
-        self.interval_time.hash(state);
+
+        // Intentionally left out as intervals can vary from one query subscriber to another
+        // self.interval_time.hash(state);
     }
 }
 
@@ -413,6 +522,16 @@ pub struct QueryReader<Q: QueryCapability> {
 impl<Q: QueryCapability> QueryReader<Q> {
     pub fn state(&self) -> Ref<QueryStateData<Q>> {
         self.state.borrow()
+    }
+
+    /// Get the result of the query.
+    ///
+    /// **This method will panic if the query is not settled.**
+    pub fn as_settled(&self) -> Ref<Result<Q::Ok, Q::Err>> {
+        Ref::map(self.state.borrow(), |state| match state {
+            QueryStateData::Settled { res, .. } => res,
+            _ => panic!("Query is not settled."),
+        })
     }
 }
 
