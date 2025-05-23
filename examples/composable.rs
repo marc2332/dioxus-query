@@ -53,7 +53,12 @@ impl QueryCapability for GetUserInfo {
     type Keys = usize;
 
     async fn run(&self, user_id: &Self::Keys) -> Result<Self::Ok, Self::Err> {
-        let name = QueriesStorage::get(GetQuery::new(*user_id, GetUserName(self.0.clone()))).await;
+        let name = QueriesStorage::get(
+            GetQuery::new(*user_id, GetUserName(self.0.clone()))
+                .stale_time(Duration::from_secs(30))
+                .clean_time(Duration::from_secs(30)),
+        )
+        .await;
         let name = name.as_settled().clone()?;
         println!("Fetching age of user {user_id}");
         sleep(Duration::from_millis(1000)).await;
@@ -82,7 +87,6 @@ fn User(id: usize) -> Element {
 
 fn app() -> Element {
     let refresh = move |_| async move {
-        QueriesStorage::<GetUserName>::invalidate_matching(0).await;
         QueriesStorage::<GetUserInfo>::invalidate_matching(0).await;
     };
 

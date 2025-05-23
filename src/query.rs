@@ -99,7 +99,7 @@ impl<Q: QueryCapability> QueryStateData<Q> {
     pub fn is_stale(&self, query: &Query<Q>) -> bool {
         match self {
             QueryStateData::Pending => true,
-            QueryStateData::Loading { .. } => false,
+            QueryStateData::Loading { .. } => true,
             QueryStateData::Settled {
                 settlement_instant, ..
             } => Instant::now().duration_since(*settlement_instant) >= query.stale_time,
@@ -267,27 +267,30 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             })
             .clone();
 
-        // Set to Loading
-        let res = mem::replace(&mut *query_data.state.borrow_mut(), QueryStateData::Pending)
-            .into_loading();
-        *query_data.state.borrow_mut() = res;
-        for scope_id in query_data.scopes.borrow().iter() {
-            cb(*scope_id)
+        // Run the query if the value is stale
+        if query_data.state.borrow().is_stale(&query) {
+            // Set to Loading
+            let res = mem::replace(&mut *query_data.state.borrow_mut(), QueryStateData::Pending)
+                .into_loading();
+            *query_data.state.borrow_mut() = res;
+            for scope_id in query_data.scopes.borrow().iter() {
+                cb(*scope_id)
+            }
+
+            // Run
+            let res = query.query.run(&query.keys).await;
+
+            // Set to Settled
+            *query_data.state.borrow_mut() = QueryStateData::Settled {
+                res,
+                settlement_instant: Instant::now(),
+            };
+            for scope_id in query_data.scopes.borrow().iter() {
+                cb(*scope_id)
+            }
         }
 
-        // Run
-        let res = query.query.run(&query.keys).await;
-
-        // Set to Settled
-        *query_data.state.borrow_mut() = QueryStateData::Settled {
-            res,
-            settlement_instant: Instant::now(),
-        };
-        for scope_id in query_data.scopes.borrow().iter() {
-            cb(*scope_id)
-        }
-
-        // Notify the suspesen task if any
+        // Notify the suspense task if any
         if let Some(suspense_task) = &*query_data.suspense_task.borrow() {
             suspense_task.notifier.notify_waiters();
         };
