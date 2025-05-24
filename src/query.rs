@@ -6,7 +6,7 @@ use std::{
     hash::Hash,
     mem,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -151,7 +151,7 @@ struct QuerySuspenseData {
 
 pub struct QueryData<Q: QueryCapability> {
     state: Rc<RefCell<QueryStateData<Q>>>,
-    scopes: Rc<RefCell<HashSet<ScopeId>>>,
+    reactive_contexts: Arc<Mutex<HashSet<ReactiveContext>>>,
 
     suspense_task: Rc<RefCell<Option<QuerySuspenseData>>>,
     interval_task: Rc<RefCell<Option<Task>>>,
@@ -162,7 +162,7 @@ impl<Q: QueryCapability> Clone for QueryData<Q> {
     fn clone(&self) -> Self {
         Self {
             state: self.state.clone(),
-            scopes: self.scopes.clone(),
+            reactive_contexts: self.reactive_contexts.clone(),
 
             suspense_task: self.suspense_task.clone(),
             interval_task: self.interval_task.clone(),
@@ -178,21 +178,18 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         }
     }
 
-    fn insert_subscription(&mut self, query: Query<Q>, scope_id: ScopeId) -> QueryData<Q> {
+    fn insert_or_get_query(&mut self, query: Query<Q>) -> QueryData<Q> {
         let query_clone = query.clone();
         let mut storage = self.storage.write();
 
         let query_data = storage.entry(query).or_insert_with(|| QueryData {
             state: Rc::new(RefCell::new(QueryStateData::Pending)),
-            scopes: Rc::default(),
+            reactive_contexts: Arc::default(),
             suspense_task: Rc::default(),
             interval_task: Rc::default(),
             clean_task: Rc::default(),
         });
         let query_data_clone = query_data.clone();
-
-        // Subscribe scope
-        query_data.scopes.borrow_mut().insert(scope_id);
 
         // Cancel clean task
         if let Some(clean_task) = query_data.clean_task.take() {
@@ -218,13 +215,11 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         query_data.clone()
     }
 
-    fn remove_subscription(&mut self, query: Query<Q>, scope_id: ScopeId) {
+    fn update_tasks(&mut self, query: Query<Q>) {
         let mut storage_clone = self.storage;
         let mut storage = self.storage.write();
 
-        // Remove scope
         let query_data = storage.get_mut(&query).unwrap();
-        query_data.scopes.borrow_mut().remove(&scope_id);
 
         // Cancel interval task
         if let Some(interval_task) = query_data.interval_task.take() {
@@ -232,7 +227,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         }
 
         // Spawn clean up task if there no more scopes
-        if query_data.scopes.borrow().is_empty() {
+        if query_data.reactive_contexts.lock().unwrap().is_empty() {
             *query_data.clean_task.borrow_mut() = spawn_forever(async move {
                 // Wait as long as the stale time is configured
                 tokio::time::sleep(query.clean_time).await;
@@ -246,7 +241,6 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
 
     pub async fn get(get_query: GetQuery<Q>) -> QueryReader<Q> {
         let query: Query<Q> = get_query.into();
-        let cb = schedule_update_any();
 
         let mut storage = match try_consume_context::<QueriesStorage<Q>>() {
             Some(storage) => storage,
@@ -259,7 +253,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             .entry(query.clone())
             .or_insert_with(|| QueryData {
                 state: Rc::new(RefCell::new(QueryStateData::Pending)),
-                scopes: Rc::default(),
+                reactive_contexts: Arc::default(),
                 suspense_task: Rc::default(),
                 interval_task: Rc::default(),
                 clean_task: Rc::default(),
@@ -272,8 +266,8 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             let res = mem::replace(&mut *query_data.state.borrow_mut(), QueryStateData::Pending)
                 .into_loading();
             *query_data.state.borrow_mut() = res;
-            for scope_id in query_data.scopes.borrow().iter() {
-                cb(*scope_id)
+            for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
+                reactive_context.mark_dirty();
             }
 
             // Run
@@ -284,8 +278,8 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
                 res,
                 settlement_instant: Instant::now(),
             };
-            for scope_id in query_data.scopes.borrow().iter() {
-                cb(*scope_id)
+            for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
+                reactive_context.mark_dirty();
             }
         }
 
@@ -295,7 +289,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         };
 
         // Spawn clean up task if there no more scopes
-        if query_data.scopes.borrow().is_empty() {
+        if query_data.reactive_contexts.lock().unwrap().is_empty() {
             *query_data.clean_task.borrow_mut() = spawn_forever(async move {
                 // Wait as long as the stale time is configured
                 tokio::time::sleep(query.clean_time).await;
@@ -351,29 +345,27 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
 
     async fn run_queries(queries: &[(&Query<Q>, &QueryData<Q>)]) {
         let tasks = FuturesUnordered::new();
-        let cb = schedule_update_any();
 
-        for (query, data) in queries {
+        for (query, query_data) in queries {
             // Set to Loading
-            let res =
-                mem::replace(&mut *data.state.borrow_mut(), QueryStateData::Pending).into_loading();
-            *data.state.borrow_mut() = res;
-            for scope_id in data.scopes.borrow().iter() {
-                cb(*scope_id)
+            let res = mem::replace(&mut *query_data.state.borrow_mut(), QueryStateData::Pending)
+                .into_loading();
+            *query_data.state.borrow_mut() = res;
+            for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
+                reactive_context.mark_dirty();
             }
 
-            let cb = cb.clone();
             tasks.push(Box::pin(async move {
                 // Run
                 let res = query.query.run(&query.keys).await;
 
                 // Set to settled
-                *data.state.borrow_mut() = QueryStateData::Settled {
+                *query_data.state.borrow_mut() = QueryStateData::Settled {
                     res,
                     settlement_instant: Instant::now(),
                 };
-                for scope_id in data.scopes.borrow().iter() {
-                    cb(*scope_id)
+                for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
+                    reactive_context.mark_dirty();
                 }
             }));
         }
@@ -539,6 +531,12 @@ impl<Q: QueryCapability> UseQuery<Q> {
             .get(&self.query.peek())
             .cloned()
             .unwrap();
+
+        // Subscribe if possible
+        if let Some(reactive_context) = ReactiveContext::current() {
+            reactive_context.subscribe(query_data.reactive_contexts.clone());
+        }
+
         QueryReader {
             state: query_data.state,
         }
@@ -553,6 +551,12 @@ impl<Q: QueryCapability> UseQuery<Q> {
         let storage = consume_context::<QueriesStorage<Q>>();
         let mut storage = storage.storage.write_unchecked();
         let query_data = storage.get_mut(&self.query.peek()).unwrap();
+
+        // Subscribe if possible
+        if let Some(reactive_context) = ReactiveContext::current() {
+            reactive_context.subscribe(query_data.reactive_contexts.clone());
+        }
+
         let state = &*query_data.state.borrow();
         match state {
             QueryStateData::Pending | QueryStateData::Loading { res: None } => {
@@ -651,17 +655,14 @@ pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
         None => provide_root_context(QueriesStorage::<Q>::new_in_root()),
     };
 
-    let scope_id = current_scope_id().unwrap();
-
     let current_query = use_hook(|| Rc::new(RefCell::new(None)));
 
-    // Create or update query subscription on changes
     let query = use_memo(use_reactive!(|query| {
-        let query_data = storage.insert_subscription(query.clone(), scope_id);
+        let query_data = storage.insert_or_get_query(query.clone());
 
-        // Remove the current query subscription if any
+        // Update the query tasks if there has been a change in the query
         if let Some(prev_query) = current_query.borrow_mut().take() {
-            storage.remove_subscription(prev_query, scope_id);
+            storage.update_tasks(prev_query);
         }
 
         // Store this new query
@@ -678,10 +679,10 @@ pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
         query
     }));
 
-    // Remove query subscription on scope drop
+    // Update the query tasks when the scope is dropped
     use_drop({
         move || {
-            storage.remove_subscription(query.peek().clone(), scope_id);
+            storage.update_tasks(query.peek().clone());
         }
     });
 
