@@ -155,7 +155,7 @@ pub struct QueryData<Q: QueryCapability> {
     reactive_contexts: Arc<Mutex<HashSet<ReactiveContext>>>,
 
     suspense_task: Rc<RefCell<Option<QuerySuspenseData>>>,
-    interval_task: Rc<RefCell<Option<Task>>>,
+    interval_task: Rc<RefCell<Option<(Duration, Task)>>>,
     clean_task: Rc<RefCell<Option<Task>>>,
 }
 
@@ -198,19 +198,36 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         }
 
         // Start an interval task if necessary
-        // If multiple queries subscribers use different intervals only the first one will get selected
-        // TODO: Use the shorter interval.
-        if query_data.interval_task.borrow().is_none() && query_clone.interval_time != Duration::MAX
-        {
-            *query_data.interval_task.borrow_mut() = spawn_forever(async move {
+        // If multiple queries subscribers use different intervals the interval task
+        // will run using the shortest interval
+        let interval = query_clone.interval_time;
+        let interval_enabled = query_clone.interval_time != Duration::MAX;
+        let interval_task = &mut *query_data.interval_task.borrow_mut();
+        
+        let create_interval_task = match interval_task {
+            None if interval_enabled => true,
+            Some((current_interval, current_interval_task)) if interval_enabled => {
+                let new_interval_is_shorter = *current_interval > interval;
+                if new_interval_is_shorter {
+                    current_interval_task.cancel();
+                    *interval_task = None;
+                }
+                new_interval_is_shorter
+            }
+            _ => false,
+        };
+        if create_interval_task {
+            let task = spawn_forever(async move {
                 loop {
                     // Wait as long as the stale time is configured
-                    tokio::time::sleep(query_clone.interval_time).await;
+                    tokio::time::sleep(interval).await;
 
                     // Run the query
                     QueriesStorage::<Q>::run_queries(&[(&query_clone, &query_data_clone)]).await;
                 }
-            });
+            })
+            .expect("Failed to spawn interval task.");
+            *interval_task = Some((interval, task));
         }
 
         query_data.clone()
@@ -223,7 +240,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         let query_data = storage.get_mut(&query).unwrap();
 
         // Cancel interval task
-        if let Some(interval_task) = query_data.interval_task.take() {
+        if let Some((_, interval_task)) = query_data.interval_task.take() {
             interval_task.cancel();
         }
 
@@ -466,9 +483,10 @@ impl<Q: QueryCapability> Query<Q> {
         Self { enabled, ..self }
     }
 
-    /// For how long is the data considered stale. If a query subscriber is mounted and the data is stale, it will re run the query.
+    /// For how long is the data considered stale. If a query subscriber is mounted and the data is stale, it will re run the query
+    /// otherwise it return the cached data.
     ///
-    /// Defaults to [Duration::ZERO], meaning it is marked stale immediately.
+    /// Defaults to [Duration::ZERO], meaning it is marked stale immediately after it has been used.
     pub fn stale_time(self, stale_time: Duration) -> Self {
         Self { stale_time, ..self }
     }
@@ -483,6 +501,8 @@ impl<Q: QueryCapability> Query<Q> {
     /// Every how often the query reruns.
     ///
     /// Defaults to [Duration::MAX], meaning it never re runs automatically.
+    ///
+    /// **Note**: If multiple subscribers of the same query use different intervals, only the shortest one will be used.
     pub fn interval_time(self, interval_time: Duration) -> Self {
         Self {
             interval_time,
