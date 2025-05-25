@@ -12,6 +12,19 @@ See the [Docs](https://docs.rs/dioxus-query/latest/dioxus_query/) or join the [D
 - All renderers ([web](https://dioxuslabs.com/learn/0.4/getting_started/wasm), [desktop](https://dioxuslabs.com/learn/0.4/getting_started/desktop), [freya](https://github.com/marc2332/freya), etc)
 - Both WASM and native targets
 
+## Features
+- [x] **Renderer-agnostic**
+- [x] **Queries** and **Mutations**
+- [x] **Fully typed**, no type erasing
+- [x] Invalidate queries **manually**
+- [x] Invalidate queries on **equality change**
+- [x] **Concurrent execution** of queries
+- [x] **Background interval re-execution** of queries
+- [x] **Opt-in in-memory cache** of queries results
+- [x] Works with ReactiveContext-powered hooks like **`use_effect` or `use_memo`**
+- [ ] On window/tab focus invalidation
+
+
 ## Installation
 
 Install the latest release:
@@ -21,79 +34,66 @@ cargo add dioxus-query
 
 ## Example
 
+Run manually:
 ```bash	
-cargo run --example simple
+cargo run --example hello_world
 ```
 
-## Usage
-
+Code:
 ```rust
-#[derive(Clone, PartialEq, Eq, Hash)]
-enum QueryKey {
-    User(usize),
+#[derive(Clone, PartialEq, Eq)]
+struct FancyClient;
+
+impl FancyClient {
+    pub fn name(&self) -> &'static str {
+        "Marc"
+    }
 }
 
-#[derive(Debug)]
-enum QueryError {
-    UserNotFound(usize),
-    Unknown
-}
+#[derive(Clone, PartialEq, Hash, Eq)]
+struct GetUserName(Captured<FancyClient>);
 
-#[derive(PartialEq, Debug)]
-enum QueryValue {
-    UserName(String),
-}
+impl QueryCapability for GetUserName {
+    type Ok = String;
+    type Err = ();
+    type Keys = usize;
 
-async fn fetch_user(keys: Vec<QueryKey>) -> QueryResult<QueryValue, QueryError> {
-    if let Some(QueryKey::User(id)) = keys.first() {
-        println!("Fetching user {id}");
-        sleep(Duration::from_millis(1000)).await;
-        match id {
-            0 => Ok(QueryValue::UserName("Marc".to_string())),
-            _ => Err(QueryError::UserNotFound(*id)),
+    async fn run(&self, user_id: &Self::Keys) -> Result<Self::Ok, Self::Err> {
+        println!("Fetching name of user {user_id}");
+        sleep(Duration::from_millis(650)).await;
+        match user_id {
+            0 => Ok(self.0.name().to_string()),
+            _ => Err(()),
         }
-    } else {
-        Err(QueryError::Unknown)
     }
 }
 
 #[allow(non_snake_case)]
 #[component]
 fn User(id: usize) -> Element {
-   let value = use_get_query([QueryKey::User(id)], fetch_user);
+    let user_name = use_query(Query::new(id, GetUserName(Captured(FancyClient))));
 
-    rsx!( p { "{value.result().value():?}" } )
+    rsx!(
+        p { "{user_name.read().state():?}" }
+    )
 }
 
 fn app() -> Element {
-    let client = use_init_query_client::<QueryValue, QueryError, QueryKey>();
-
-    let onclick = move |_| {
-         client.invalidate_queries(&[QueryKey::User(0)]);
+    let refresh = move |_| async move {
+        QueriesStorage::<GetUserName>::invalidate_matching(0).await;
     };
 
     rsx!(
         User { id: 0 }
-        button { onclick, label { "Refresh" } }
+        User { id: 0 }
+        button { onclick: refresh, label { "Refresh" } }
     )
 }
 ```
 
-## Features
-- [x] Renderer-agnostic
-- [x] Queries and mutations
-- [x] Typed Mutations, Query keys, Errors and Values
-- [x] Invalidate queries manually
-- [x] Invalidate queries when keys change
-- [x] Concurrent and batching of queries
-- [x] Concurrent mutations
-- [ ] Background interval invalidation
-- [ ] On window focus invalidation
-
-
 ## To Do
 - Tests
-- Documentation
+- Improved documentation
 - Real-world examples
 
 MIT License
