@@ -26,12 +26,16 @@ where
     type Err;
     type Keys: Hash + PartialEq + Clone;
 
+    /// Mutation logic.
     fn run(&self, keys: &Self::Keys) -> impl Future<Output = Result<Self::Ok, Self::Err>>;
 
+    /// Implement a custom logic to check if this mutation should be invalidated or not given a [MutationCapability::Keys].
     fn matches(&self, _keys: &Self::Keys) -> bool {
         true
     }
 
+    /// Runs after [MutationCapability::run].
+    /// You may use this method to invalidate [crate::query::Query]s.
     fn on_settled(
         &self,
         _keys: &Self::Keys,
@@ -267,6 +271,7 @@ impl<Q: MutationCapability> UseMutation<Q> {
     /// Read the [Mutation].
     ///
     /// This **will** automatically subscribe.
+    /// If you want a **subscribing** method have a look at [UseMutation::peek].
     pub fn read(&self) -> MutationReader<Q> {
         let storage = consume_context::<MutationsStorage<Q>>();
         let mutation_data = storage
@@ -278,7 +283,7 @@ impl<Q: MutationCapability> UseMutation<Q> {
 
         // Subscribe if possible
         if let Some(reactive_context) = ReactiveContext::current() {
-            reactive_context.subscribe(mutation_data.reactive_contexts.clone());
+            reactive_context.subscribe(mutation_data.reactive_contexts);
         }
 
         MutationReader {
@@ -289,6 +294,7 @@ impl<Q: MutationCapability> UseMutation<Q> {
     /// Read the [Mutation].
     ///
     /// This **will not** automatically subscribe.
+    /// If you want a **subscribing** method have a look at [UseMutation::read].
     pub fn peek(&self) -> MutationReader<Q> {
         let storage = consume_context::<MutationsStorage<Q>>();
         let mutation_data = storage

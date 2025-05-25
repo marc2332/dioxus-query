@@ -29,8 +29,10 @@ where
     type Err;
     type Keys: Hash + PartialEq + Clone;
 
+    /// Query logic.
     fn run(&self, keys: &Self::Keys) -> impl Future<Output = Result<Self::Ok, Self::Err>>;
 
+    /// Implement a custom logic to check if this query should be invalidated or not given a [QueryCapability::Keys].
     fn matches(&self, _keys: &Self::Keys) -> bool {
         true
     }
@@ -203,7 +205,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         let interval = query_clone.interval_time;
         let interval_enabled = query_clone.interval_time != Duration::MAX;
         let interval_task = &mut *query_data.interval_task.borrow_mut();
-        
+
         let create_interval_task = match interval_task {
             None if interval_enabled => true,
             Some((current_interval, current_interval_task)) if interval_enabled => {
@@ -544,9 +546,10 @@ impl<Q: QueryCapability> Clone for UseQuery<Q> {
 impl<Q: QueryCapability> Copy for UseQuery<Q> {}
 
 impl<Q: QueryCapability> UseQuery<Q> {
-    /// Read the [Query].
+    /// Read the [Query] state.
     ///
     /// This **will** automatically subscribe.
+    /// If you want a **non-subscribing** method have a look at [UseQuery::peek].
     pub fn read(&self) -> QueryReader<Q> {
         let storage = consume_context::<QueriesStorage<Q>>();
         let query_data = storage
@@ -558,7 +561,7 @@ impl<Q: QueryCapability> UseQuery<Q> {
 
         // Subscribe if possible
         if let Some(reactive_context) = ReactiveContext::current() {
-            reactive_context.subscribe(query_data.reactive_contexts.clone());
+            reactive_context.subscribe(query_data.reactive_contexts);
         }
 
         QueryReader {
@@ -566,9 +569,10 @@ impl<Q: QueryCapability> UseQuery<Q> {
         }
     }
 
-    /// Read the [Query].
+    /// Read the [Query] state.
     ///
-    /// This **will** automatically subscribe.
+    /// This **will not** automatically subscribe.
+    /// If you want a **subscribing** method have a look at [UseQuery::read].
     pub fn peek(&self) -> QueryReader<Q> {
         let storage = consume_context::<QueriesStorage<Q>>();
         let query_data = storage
@@ -577,11 +581,6 @@ impl<Q: QueryCapability> UseQuery<Q> {
             .get(&self.query.peek())
             .cloned()
             .unwrap();
-
-        // Subscribe if possible
-        if let Some(reactive_context) = ReactiveContext::current() {
-            reactive_context.subscribe(query_data.reactive_contexts.clone());
-        }
 
         QueryReader {
             state: query_data.state,
