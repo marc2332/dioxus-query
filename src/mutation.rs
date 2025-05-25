@@ -352,6 +352,12 @@ impl<Q: MutationCapability> UseMutation<Q> {
     }
 }
 
+/// Mutations are used to update data asynchronously of an e.g external resources such as HTTP APIs.
+///
+/// ### Clean time
+/// This is how long will the mutation result be kept cached after there are no more subscribers of that mutation.
+///
+/// See [Mutation::clean_time].
 pub fn use_mutation<Q: MutationCapability>(mutation: Mutation<Q>) -> UseMutation<Q> {
     let mut storage = match try_consume_context::<MutationsStorage<Q>>() {
         Some(storage) => storage,

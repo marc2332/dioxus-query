@@ -694,7 +694,7 @@ impl<Q: QueryCapability> UseQuery<Q> {
 ///
 /// See [Query::clean_time].
 ///
-/// /// ### Interval time
+/// ### Interval time
 /// This is how often do you want a query to be refreshed in the background automatically.
 /// By default it never refreshes automatically.
 ///
