@@ -1,12 +1,14 @@
 use std::{hash::Hash, ops::Deref};
 
-/// Capture values to use later inside Mutations, but with a catch, if the capture value changes the mutation wont recapture it because
-/// the [PartialEq] implementation always returns false.
+/// Capture values to use later inside Queries or Mutations, but with a catch, if the capture value changes the mutation will not recapture it because
+/// the [PartialEq] implementation always returns `true`.
 ///
-/// So in other words `Capture(1) == Capture(1)` will be `false`.
+/// So in other words `Capture(1) == Capture(5)` will be `true`.
 ///
 /// **This is intended to use for value types that are not mean to be diffed and that are expected to maintain their value across time.
-/// Like "Clients" of external resources.**
+/// Like "Clients" of external resources such as API Clients.**
+///
+/// Just so its clear, you might or not need this, use carefully.
 #[derive(Clone)]
 pub struct Captured<T: Clone>(pub T);
 

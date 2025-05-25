@@ -6,6 +6,7 @@ use std::{
     hash::Hash,
     mem,
     rc::Rc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -128,17 +129,17 @@ impl<Q: MutationCapability> Clone for MutationsStorage<Q> {
 
 pub struct MutationData<Q: MutationCapability> {
     state: Rc<RefCell<MutationStateData<Q>>>,
-    scopes: Rc<RefCell<HashSet<ScopeId>>>,
+    reactive_contexts: Arc<Mutex<HashSet<ReactiveContext>>>,
 
-    clean_task: Option<Task>,
+    clean_task: Rc<RefCell<Option<Task>>>,
 }
 
 impl<Q: MutationCapability> Clone for MutationData<Q> {
     fn clone(&self) -> Self {
         Self {
             state: self.state.clone(),
-            scopes: self.scopes.clone(),
-            clean_task: self.clean_task,
+            reactive_contexts: self.reactive_contexts.clone(),
+            clean_task: self.clean_task.clone(),
         }
     }
 }
@@ -150,17 +151,14 @@ impl<Q: MutationCapability> MutationsStorage<Q> {
         }
     }
 
-    fn insert_subscription(&mut self, mutation: Mutation<Q>, scope_id: ScopeId) -> MutationData<Q> {
+    fn insert_or_get_mutation(&mut self, mutation: Mutation<Q>) -> MutationData<Q> {
         let mut storage = self.storage.write();
 
         let mutation_data = storage.entry(mutation).or_insert_with(|| MutationData {
             state: Rc::new(RefCell::new(MutationStateData::Pending)),
-            scopes: Rc::default(),
-            clean_task: None,
+            reactive_contexts: Arc::default(),
+            clean_task: Rc::default(),
         });
-
-        // Subscribe scope
-        mutation_data.scopes.borrow_mut().insert(scope_id);
 
         // Cancel clean task
         if let Some(clean_task) = mutation_data.clean_task.take() {
@@ -170,17 +168,15 @@ impl<Q: MutationCapability> MutationsStorage<Q> {
         mutation_data.clone()
     }
 
-    fn remove_subscription(&mut self, mutation: Mutation<Q>, scope_id: ScopeId) {
+    fn update_tasks(&mut self, mutation: Mutation<Q>) {
         let mut storage_clone = self.storage;
         let mut storage = self.storage.write();
 
-        // Remove scope
         let mutation_data = storage.get_mut(&mutation).unwrap();
-        mutation_data.scopes.borrow_mut().remove(&scope_id);
 
-        // Spawn clean up task if there no more scopes
-        if mutation_data.scopes.borrow().is_empty() {
-            mutation_data.clean_task = spawn_forever(async move {
+        // Spawn clean up task if there no more reactive contexts
+        if mutation_data.reactive_contexts.lock().unwrap().is_empty() {
+            *mutation_data.clean_task.borrow_mut() = spawn_forever(async move {
                 // Wait as long as the stale time is configured
                 tokio::time::sleep(mutation.clean_time).await;
 
@@ -192,14 +188,12 @@ impl<Q: MutationCapability> MutationsStorage<Q> {
     }
 
     async fn run(mutation: &Mutation<Q>, data: &MutationData<Q>, keys: Q::Keys) {
-        let cb = schedule_update_any();
-
         // Set to Loading
         let res =
             mem::replace(&mut *data.state.borrow_mut(), MutationStateData::Pending).into_loading();
         *data.state.borrow_mut() = res;
-        for scope_id in data.scopes.borrow().iter() {
-            cb(*scope_id)
+        for reactive_context in data.reactive_contexts.lock().unwrap().iter() {
+            reactive_context.mark_dirty();
         }
 
         // Run
@@ -211,8 +205,8 @@ impl<Q: MutationCapability> MutationsStorage<Q> {
             res,
             settlement_instant: Instant::now(),
         };
-        for scope_id in data.scopes.borrow().iter() {
-            cb(*scope_id)
+        for reactive_context in data.reactive_contexts.lock().unwrap().iter() {
+            reactive_context.mark_dirty();
         }
     }
 }
@@ -270,15 +264,43 @@ impl<Q: MutationCapability> Clone for UseMutation<Q> {
 impl<Q: MutationCapability> Copy for UseMutation<Q> {}
 
 impl<Q: MutationCapability> UseMutation<Q> {
+    /// Read the [Mutation].
+    ///
+    /// This **will** automatically subscribe.
     pub fn read(&self) -> MutationReader<Q> {
         let storage = consume_context::<MutationsStorage<Q>>();
-        let state = storage
+        let mutation_data = storage
             .storage
             .peek_unchecked()
             .get(&self.mutation.peek())
             .cloned()
             .unwrap();
-        MutationReader { state: state.state }
+
+        // Subscribe if possible
+        if let Some(reactive_context) = ReactiveContext::current() {
+            reactive_context.subscribe(mutation_data.reactive_contexts.clone());
+        }
+
+        MutationReader {
+            state: mutation_data.state,
+        }
+    }
+
+    /// Read the [Mutation].
+    ///
+    /// This **will not** automatically subscribe.
+    pub fn peek(&self) -> MutationReader<Q> {
+        let storage = consume_context::<MutationsStorage<Q>>();
+        let mutation_data = storage
+            .storage
+            .peek_unchecked()
+            .get(&self.mutation.peek())
+            .cloned()
+            .unwrap();
+
+        MutationReader {
+            state: mutation_data.state,
+        }
     }
 
     /// Run this mutation await its result.
@@ -330,17 +352,15 @@ pub fn use_mutation<Q: MutationCapability>(mutation: Mutation<Q>) -> UseMutation
         None => provide_root_context(MutationsStorage::<Q>::new_in_root()),
     };
 
-    let scope_id = current_scope_id().unwrap();
-
     let current_mutation = use_hook(|| Rc::new(RefCell::new(None)));
 
     // Create or update mutation subscription on changes
     let mutation = use_memo(use_reactive!(|mutation| {
-        let _data = storage.insert_subscription(mutation.clone(), scope_id);
+        let _data = storage.insert_or_get_mutation(mutation.clone());
 
-        // Remove the current mutation subscription if any
+        // Update the mutation tasks if there has been a change in the mutation
         if let Some(prev_mutation) = current_mutation.borrow_mut().take() {
-            storage.remove_subscription(prev_mutation, scope_id);
+            storage.update_tasks(prev_mutation);
         }
 
         // Store this new mutation
@@ -349,10 +369,10 @@ pub fn use_mutation<Q: MutationCapability>(mutation: Mutation<Q>) -> UseMutation
         mutation
     }));
 
-    // Remove mutation subscription on scope drop
+    // Update the query tasks when the scope is dropped
     use_drop({
         move || {
-            storage.remove_subscription(mutation.peek().clone(), scope_id);
+            storage.update_tasks(mutation.peek().clone());
         }
     });
 

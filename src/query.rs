@@ -226,7 +226,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             interval_task.cancel();
         }
 
-        // Spawn clean up task if there no more scopes
+        // Spawn clean up task if there no more reactive contexts
         if query_data.reactive_contexts.lock().unwrap().is_empty() {
             *query_data.clean_task.borrow_mut() = spawn_forever(async move {
                 // Wait as long as the stale time is configured
@@ -288,7 +288,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             suspense_task.notifier.notify_waiters();
         };
 
-        // Spawn clean up task if there no more scopes
+        // Spawn clean up task if there no more reactive contexts
         if query_data.reactive_contexts.lock().unwrap().is_empty() {
             *query_data.clean_task.borrow_mut() = spawn_forever(async move {
                 // Wait as long as the stale time is configured
@@ -523,6 +523,9 @@ impl<Q: QueryCapability> Clone for UseQuery<Q> {
 impl<Q: QueryCapability> Copy for UseQuery<Q> {}
 
 impl<Q: QueryCapability> UseQuery<Q> {
+    /// Read the [Query].
+    ///
+    /// This **will** automatically subscribe.
     pub fn read(&self) -> QueryReader<Q> {
         let storage = consume_context::<QueriesStorage<Q>>();
         let query_data = storage
@@ -542,7 +545,31 @@ impl<Q: QueryCapability> UseQuery<Q> {
         }
     }
 
+    /// Read the [Query].
+    ///
+    /// This **will** automatically subscribe.
+    pub fn peek(&self) -> QueryReader<Q> {
+        let storage = consume_context::<QueriesStorage<Q>>();
+        let query_data = storage
+            .storage
+            .peek_unchecked()
+            .get(&self.query.peek())
+            .cloned()
+            .unwrap();
+
+        // Subscribe if possible
+        if let Some(reactive_context) = ReactiveContext::current() {
+            reactive_context.subscribe(query_data.reactive_contexts.clone());
+        }
+
+        QueryReader {
+            state: query_data.state,
+        }
+    }
+
     /// Suspend this query until it has been **settled**.
+    ///
+    /// This **will** automatically subscribe.
     pub fn suspend(&self) -> Result<Result<Q::Ok, Q::Err>, RenderError>
     where
         Q::Ok: Clone,
