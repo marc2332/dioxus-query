@@ -481,7 +481,7 @@ impl<Q: QueryCapability> Query<Q> {
     }
 
     /// Enable or disable this query so that it doesnt automatically run.
-    /// 
+    ///
     /// Defaults to `true`.
     pub fn enable(self, enabled: bool) -> Self {
         Self { enabled, ..self }
