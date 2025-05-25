@@ -19,9 +19,10 @@ See the [Docs](https://docs.rs/dioxus-query/latest/dioxus_query/) or join the [D
 - [x] Invalidate queries **manually**
 - [x] Invalidate queries on **equality change**
 - [x] **Concurrent execution** of queries
-- [x] **Background interval execution** of queries
+- [x] **Background interval re-execution** of queries
 - [x] **Opt-in in-memory cache** of queries results
-- [ ] On window focus invalidation
+- [x] Works with ReactiveContext-powered hooks like **`use_effect` or `use_memo`**
+- [ ] On window/tab focus invalidation
 
 
 ## Installation
@@ -40,7 +41,6 @@ cargo run --example hello_world
 
 Code:
 ```rust
-
 #[derive(Clone, PartialEq, Eq)]
 struct FancyClient;
 
@@ -71,9 +71,7 @@ impl QueryCapability for GetUserName {
 #[allow(non_snake_case)]
 #[component]
 fn User(id: usize) -> Element {
-    let user_name = use_query(
-        Query::new(id, GetUserName(Captured(FancyClient))),
-    );
+    let user_name = use_query(Query::new(id, GetUserName(Captured(FancyClient))));
 
     rsx!(
         p { "{user_name.read().state():?}" }

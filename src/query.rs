@@ -10,6 +10,7 @@ use std::{
     time::Duration,
 };
 
+use ::warnings::Warning;
 use dioxus_lib::prelude::Task;
 use dioxus_lib::prelude::*;
 use dioxus_lib::signals::{Readable, Writable};
@@ -19,7 +20,6 @@ use dioxus_lib::{
 };
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use tokio::{sync::Notify, time::Instant};
-use ::warnings::Warning;
 
 pub trait QueryCapability
 where
@@ -576,8 +576,9 @@ impl<Q: QueryCapability> UseQuery<Q> {
         Q::Ok: Clone,
         Q::Err: Clone,
     {
-        let _allow_write_in_component_body = ::warnings::Allow::new(warnings::signal_write_in_component_body::ID);
-        
+        let _allow_write_in_component_body =
+            ::warnings::Allow::new(warnings::signal_write_in_component_body::ID);
+
         let storage = consume_context::<QueriesStorage<Q>>();
         let mut storage = storage.storage.write_unchecked();
         let query_data = storage.get_mut(&self.query.peek()).unwrap();
