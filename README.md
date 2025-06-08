@@ -41,7 +41,7 @@ cargo run --example hello_world
 
 Code:
 ```rust
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 struct FancyClient;
 
 impl FancyClient {

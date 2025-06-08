@@ -13,7 +13,7 @@ fn main() {
     launch(app);
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 struct FancyClient;
 
 impl FancyClient {
