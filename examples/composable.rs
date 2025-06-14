@@ -26,15 +26,12 @@ impl FancyClient {
     }
 }
 
-#[derive(Clone, PartialEq, Hash, Eq)]
+#[derive(Query)]
+#[query(ok = String, err = (), key = usize)]
 struct GetUserName(Captured<FancyClient>);
 
-impl QueryCapability for GetUserName {
-    type Ok = String;
-    type Err = ();
-    type Keys = usize;
-
-    async fn run(&self, user_id: &Self::Keys) -> Result<Self::Ok, Self::Err> {
+impl GetUserName {
+    async fn run(&self, user_id: &usize) -> Result<String, ()> {
         println!("Fetching name of user {user_id}");
         sleep(Duration::from_millis(650)).await;
         match user_id {
@@ -44,15 +41,12 @@ impl QueryCapability for GetUserName {
     }
 }
 
-#[derive(Clone, PartialEq, Hash, Eq)]
+#[derive(Query)]
+#[query(ok = "(String, u8)", err = (), key = usize)]
 struct GetUserInfo(Captured<FancyClient>);
 
-impl QueryCapability for GetUserInfo {
-    type Ok = (String, u8);
-    type Err = ();
-    type Keys = usize;
-
-    async fn run(&self, user_id: &Self::Keys) -> Result<Self::Ok, Self::Err> {
+impl GetUserInfo {
+    async fn run(&self, user_id: &usize) -> Result<(String, u8), ()> {
         let name = QueriesStorage::get(
             GetQuery::new(*user_id, GetUserName(self.0.clone()))
                 .stale_time(Duration::from_secs(30))
