@@ -309,12 +309,12 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
                 reactive_context.mark_dirty();
             }
-        }
 
-        // Notify the suspense task if any
-        if let Some(suspense_task) = &*query_data.suspense_task.borrow() {
-            suspense_task.notifier.notify_waiters();
-        };
+            // Notify the suspense task if any
+            if let Some(suspense_task) = &*query_data.suspense_task.borrow() {
+                suspense_task.notifier.notify_waiters();
+            };
+        }
 
         // Spawn clean up task if there no more reactive contexts
         if query_data.reactive_contexts.lock().unwrap().is_empty() {
@@ -395,6 +395,11 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
                 for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
                     reactive_context.mark_dirty();
                 }
+
+                // Notify the suspense task if any
+                if let Some(suspense_task) = &*query_data.suspense_task.borrow() {
+                    suspense_task.notifier.notify_waiters();
+                };
             }));
         }
 
