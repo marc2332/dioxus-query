@@ -25,15 +25,3 @@ tokio = { version = "^1", features = ["sync", "time"] }
 [dev-dependencies]
 dioxus = { version = "0.6", features = ["desktop"] }
 tokio = { version = "^1", features = ["time"] }
-
-[profile]
-
-[profile.wasm-dev]
-inherits = "dev"
-opt-level = 1
-
-[profile.server-dev]
-inherits = "dev"
-
-[profile.android-dev]
-inherits = "dev"
