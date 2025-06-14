@@ -27,7 +27,7 @@ use tokio::time::Instant;
 #[cfg(target_family = "wasm")]
 use wasmtimer::tokio as time;
 #[cfg(target_family = "wasm")]
-use webtime::Instant;
+use web_time::Instant;
 
 pub trait QueryCapability
 where
