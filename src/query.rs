@@ -113,7 +113,7 @@ impl<Q: QueryCapability> QueryStateData<Q> {
             QueryStateData::Loading { .. } => true,
             QueryStateData::Settled {
                 settlement_instant, ..
-            } => time::Instant::now().duration_since(*settlement_instant) >= query.stale_time,
+            } => Instant::now().duration_since(*settlement_instant) >= query.stale_time,
         }
     }
 
