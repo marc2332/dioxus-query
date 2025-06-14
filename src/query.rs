@@ -230,7 +230,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             let task = spawn_forever(async move {
                 loop {
                     // Wait as long as the stale time is configured
-                    tokio::time::sleep(interval).await;
+                    time::sleep(interval).await;
 
                     // Run the query
                     QueriesStorage::<Q>::run_queries(&[(&query_clone, &query_data_clone)]).await;
@@ -258,7 +258,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         if query_data.reactive_contexts.lock().unwrap().is_empty() {
             *query_data.clean_task.borrow_mut() = spawn_forever(async move {
                 // Wait as long as the stale time is configured
-                tokio::time::sleep(query.clean_time).await;
+                time::sleep(query.clean_time).await;
 
                 // Finally clear the query
                 let mut storage = storage_clone.write();
@@ -320,7 +320,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
         if query_data.reactive_contexts.lock().unwrap().is_empty() {
             *query_data.clean_task.borrow_mut() = spawn_forever(async move {
                 // Wait as long as the stale time is configured
-                tokio::time::sleep(query.clean_time).await;
+                time::sleep(query.clean_time).await;
 
                 // Finally clear the query
                 let mut storage = storage.storage.write();
