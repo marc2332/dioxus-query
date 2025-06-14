@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Field, Fields, Lit, Meta, MetaNameValue};
+use syn::{parse_macro_input, Data, DeriveInput, Fields, Lit, Meta, MetaNameValue};
 
 /// Derive macro for automatically implementing QueryCapability
 ///
@@ -34,7 +34,7 @@ pub fn derive_query(input: TokenStream) -> TokenStream {
         Err(err) => return err.to_compile_error().into(),
     };
 
-    let captured_fields = generate_captured_fields(&fields);
+    let (_, clone_impl) = generate_clone_implementation(&name, fields);
 
     let expanded = quote! {
         impl ::dioxus_query::query::QueryCapability for #name {
@@ -47,13 +47,7 @@ pub fn derive_query(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl ::std::clone::Clone for #name {
-            fn clone(&self) -> Self {
-                Self {
-                    #captured_fields
-                }
-            }
-        }
+        #clone_impl
 
         impl ::std::cmp::PartialEq for #name {
             fn eq(&self, other: &Self) -> bool {
@@ -73,15 +67,78 @@ pub fn derive_query(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-fn generate_captured_fields(
-    fields: &syn::punctuated::Punctuated<Field, syn::token::Comma>,
-) -> proc_macro2::TokenStream {
-    let field_clones = fields.iter().map(|field| {
-        let field_name = &field.ident;
-        quote! { #field_name: self.#field_name.clone() }
-    });
+fn extract_name_and_fields(
+    input: &DeriveInput,
+) -> Result<
+    (
+        &syn::Ident,
+        Option<Fields>, // Changed to return Fields directly
+    ),
+    syn::Error,
+> {
+    let name = &input.ident;
+    match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(fields) => Ok((name, Some(Fields::Named(fields.clone())))),
+            Fields::Unnamed(fields) => Ok((name, Some(Fields::Unnamed(fields.clone())))), // Handle unnamed fields
+            Fields::Unit => Ok((name, None)),
+        },
+        _ => Err(syn::Error::new_spanned(
+            input,
+            "This derive macro only supports structs",
+        )),
+    }
+}
 
-    quote! { #(#field_clones),* }
+fn generate_clone_implementation(
+    name: &syn::Ident,
+    fields_option: Option<Fields>,
+) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+    match fields_option {
+        Some(Fields::Named(fields)) => {
+            let field_clones = fields.named.iter().map(|field| {
+                let field_name = &field.ident;
+                quote! { #field_name: self.#field_name.clone() }
+            });
+            let captured_fields = quote! { #(#field_clones),* };
+            let clone_impl = quote! {
+                impl ::std::clone::Clone for #name {
+                    fn clone(&self) -> Self {
+                        Self {
+                            #captured_fields
+                        }
+                    }
+                }
+            };
+            (captured_fields, clone_impl)
+        }
+        Some(Fields::Unnamed(fields)) => {
+            let field_clones = fields.unnamed.iter().enumerate().map(|(i, _field)| {
+                let index = syn::Index::from(i);
+                quote! { self.#index.clone() }
+            });
+            let captured_fields = quote! { #(#field_clones),* };
+            let clone_impl = quote! {
+                impl ::std::clone::Clone for #name {
+                    fn clone(&self) -> Self {
+                        Self(#captured_fields)
+                    }
+                }
+            };
+            (captured_fields, clone_impl)
+        }
+        Some(Fields::Unit) | None => {
+            let captured_fields = quote! {};
+            let clone_impl = quote! {
+                impl ::std::clone::Clone for #name {
+                    fn clone(&self) -> Self {
+                        Self
+                    }
+                }
+            };
+            (captured_fields, clone_impl)
+        }
+    }
 }
 
 #[proc_macro_derive(Mutation, attributes(mutation))]
@@ -101,7 +158,7 @@ pub fn derive_mutation(input: TokenStream) -> TokenStream {
         Err(err) => return err.to_compile_error().into(),
     };
 
-    let captured_fields = generate_captured_fields(&fields);
+    let (_, clone_impl) = generate_clone_implementation(&name, fields);
 
     let expanded = quote! {
         impl ::dioxus_query::mutation::MutationCapability for #name {
@@ -122,22 +179,11 @@ pub fn derive_mutation(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl ::std::clone::Clone for #name {
-            fn clone(&self) -> Self {
-                Self {
-                    #captured_fields
-                }
-            }
-        }
+        #clone_impl
 
         impl ::std::cmp::PartialEq for #name {
             fn eq(&self, other: &Self) -> bool {
-                // TODO: Compare fields if they are PartialEq
-                // For now, to ensure proper re-rendering on state change in captured values,
-                // we should compare the captured fields if possible.
-                // However, the original Query derive had `true`, so we'll start there.
-                // This might need refinement based on how Captured<T>'s PartialEq works.
-                true
+                true // For simplicity, consider all instances equal
             }
         }
 
@@ -146,43 +192,11 @@ pub fn derive_mutation(input: TokenStream) -> TokenStream {
         impl ::std::hash::Hash for #name {
             fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
                 stringify!(#name).hash(state);
-                // TODO: Hash fields if they are Hash
             }
         }
     };
 
     TokenStream::from(expanded)
-}
-
-// Helper function to extract struct name and fields
-fn extract_name_and_fields(
-    input: &DeriveInput,
-) -> Result<
-    (
-        &syn::Ident,
-        &syn::punctuated::Punctuated<Field, syn::token::Comma>,
-    ),
-    syn::Error,
-> {
-    let name = &input.ident;
-    let fields = match &input.data {
-        Data::Struct(data) => match &data.fields {
-            Fields::Named(fields) => &fields.named,
-            _ => {
-                return Err(syn::Error::new_spanned(
-                    input,
-                    "This derive macro only supports structs with named fields",
-                ));
-            }
-        },
-        _ => {
-            return Err(syn::Error::new_spanned(
-                input,
-                "This derive macro only supports structs",
-            ));
-        }
-    };
-    Ok((name, fields))
 }
 
 struct DeriveAttributeValues {

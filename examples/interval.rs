@@ -13,15 +13,13 @@ fn main() {
     launch(app);
 }
 
-#[derive(Clone, PartialEq, Hash, Eq)]
+#[derive(Query)] // Added Query derive and other necessary derives
+#[query(ok = String, err = (), key = usize)] // Added query attribute
 struct GetUserName;
 
-impl QueryCapability for GetUserName {
-    type Ok = String;
-    type Err = ();
-    type Keys = usize;
-
-    async fn run(&self, user_id: &Self::Keys) -> Result<Self::Ok, Self::Err> {
+// User still defines the run logic
+impl GetUserName {
+    async fn run(&self, user_id: &usize) -> Result<String, ()> {
         println!("Fetching name of user {user_id}");
         sleep(Duration::from_millis(650)).await;
         match user_id {
@@ -55,7 +53,9 @@ fn app() -> Element {
     };
 
     rsx!(
-        button { onclick: new_replica, label { "New replica" } }
+        button { onclick: new_replica,
+            label { "New replica" }
+        }
         for i in 0..replicas() {
             User { key: "{i}", id: 0 }
         }

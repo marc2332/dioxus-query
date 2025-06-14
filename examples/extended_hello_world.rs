@@ -26,15 +26,12 @@ impl FancyClient {
     }
 }
 
-#[derive(Clone, PartialEq, Hash, Eq)]
+#[derive(Query)]
+#[query(ok = String, err = (), key = usize)]
 struct GetUserName(Captured<FancyClient>);
 
-impl QueryCapability for GetUserName {
-    type Ok = String;
-    type Err = ();
-    type Keys = usize;
-
-    async fn run(&self, user_id: &Self::Keys) -> Result<Self::Ok, Self::Err> {
+impl GetUserName {
+    async fn run(&self, user_id: &usize) -> Result<String, ()> {
         println!("Fetching name of user {user_id}");
         sleep(Duration::from_millis(650)).await;
         match user_id {
@@ -44,15 +41,12 @@ impl QueryCapability for GetUserName {
     }
 }
 
-#[derive(Clone, PartialEq, Hash, Eq)]
+#[derive(Query)]
+#[query(ok = u8, err = (), key = usize)]
 struct GetUserAge(Captured<FancyClient>);
 
-impl QueryCapability for GetUserAge {
-    type Ok = u8;
-    type Err = ();
-    type Keys = usize;
-
-    async fn run(&self, user_id: &Self::Keys) -> Result<Self::Ok, Self::Err> {
+impl GetUserAge {
+    async fn run(&self, user_id: &usize) -> Result<u8, ()> {
         println!("Fetching age of user {user_id}");
         sleep(Duration::from_millis(1000)).await;
         match user_id {
@@ -97,8 +91,12 @@ fn app() -> Element {
     };
 
     rsx!(
-        button { onclick: new_replica, label { "New replica" } }
-        button { onclick: refresh, label { "Refresh" } }
+        button { onclick: new_replica,
+            label { "New replica" }
+        }
+        button { onclick: refresh,
+            label { "Refresh" }
+        }
         for i in 0..replicas() {
             User { key: "{i}", id: 0 }
         }
