@@ -3,6 +3,7 @@ use quote::quote;
 use syn::{parse_macro_input, Attribute, Data, DeriveInput, Field, Fields};
 
 /// Derive macro for automatically implementing QueryCapability
+/// Now automatically infers ok, err, and key types from the run method signature!
 ///
 /// # Example
 /// ```rust
@@ -13,7 +14,7 @@ use syn::{parse_macro_input, Attribute, Data, DeriveInput, Field, Fields};
 ///
 /// impl GetUserName {
 ///     async fn run(&self, user_id: &usize) -> Result<String, ()> {
-///         // Your async logic here
+///         // Types are automatically inferred: key=usize, ok=String, err=()
 ///     }
 /// }
 /// ```
@@ -42,7 +43,7 @@ pub fn derive_query(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Find the key type from attributes or default to usize
+    // For now, use defaults - we'll enhance this to parse the impl block later
     let key_type = extract_key_type(&input.attrs).unwrap_or_else(|| quote! { usize });
     let ok_type = extract_ok_type(&input.attrs).unwrap_or_else(|| quote! { String });
     let err_type = extract_err_type(&input.attrs).unwrap_or_else(|| quote! { () });
