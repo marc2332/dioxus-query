@@ -22,8 +22,12 @@ use futures_util::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::Notify;
 #[cfg(not(target_family = "wasm"))]
 use tokio::time;
+#[cfg(not(target_family = "wasm"))]
+use tokio::time::Instant;
 #[cfg(target_family = "wasm")]
 use wasmtimer::tokio as time;
+#[cfg(target_family = "wasm")]
+use webtime::Instant;
 
 pub trait QueryCapability
 where
@@ -50,7 +54,7 @@ pub enum QueryStateData<Q: QueryCapability> {
     /// Is not loading and has a settled value.
     Settled {
         res: Result<Q::Ok, Q::Err>,
-        settlement_instant: time::Instant,
+        settlement_instant: Instant,
     },
 }
 
@@ -300,7 +304,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             // Set to Settled
             *query_data.state.borrow_mut() = QueryStateData::Settled {
                 res,
-                settlement_instant: time::Instant::now(),
+                settlement_instant: Instant::now(),
             };
             for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
                 reactive_context.mark_dirty();
@@ -386,7 +390,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
                 // Set to settled
                 *query_data.state.borrow_mut() = QueryStateData::Settled {
                     res,
-                    settlement_instant: time::Instant::now(),
+                    settlement_instant: Instant::now(),
                 };
                 for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
                     reactive_context.mark_dirty();

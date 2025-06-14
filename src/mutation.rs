@@ -18,8 +18,12 @@ use dioxus_lib::{
 };
 #[cfg(not(target_family = "wasm"))]
 use tokio::time;
+#[cfg(not(target_family = "wasm"))]
+use tokio::time::Instant;
 #[cfg(target_family = "wasm")]
 use wasmtimer::tokio as time;
+#[cfg(target_family = "wasm")]
+use webtime::Instant;
 
 pub trait MutationCapability
 where
@@ -56,7 +60,7 @@ pub enum MutationStateData<Q: MutationCapability> {
     /// Is not loading and has a settled value.
     Settled {
         res: Result<Q::Ok, Q::Err>,
-        settlement_instant: time::Instant,
+        settlement_instant: Instant,
     },
 }
 
@@ -210,7 +214,7 @@ impl<Q: MutationCapability> MutationsStorage<Q> {
         mutation.mutation.on_settled(&keys, &res).await;
         *data.state.borrow_mut() = MutationStateData::Settled {
             res,
-            settlement_instant: time::Instant::now(),
+            settlement_instant: Instant::now(),
         };
         for reactive_context in data.reactive_contexts.lock().unwrap().iter() {
             reactive_context.mark_dirty();
