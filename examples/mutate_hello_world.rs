@@ -34,45 +34,45 @@ impl FancyClient {
     }
 }
 
-#[derive(Clone, PartialEq, Hash, Eq)]
-struct SetUserAge(Captured<FancyClient>);
-
-impl MutationCapability for SetUserAge {
-    type Ok = i32;
-    type Err = ();
-    type Keys = usize;
-
-    async fn run(&self, user_id: &Self::Keys) -> Result<Self::Ok, Self::Err> {
-        println!("Updating age of user {user_id}");
-        sleep(Duration::from_millis(400)).await;
-        let curr_age = self.0.age();
-        self.0.set_age(curr_age + 1);
-        match user_id {
-            0 => Ok(self.0.age()),
-            _ => Err(()),
-        }
-    }
-
-    async fn on_settled(&self, user_id: &Self::Keys, _result: &Result<Self::Ok, Self::Err>) {
-        QueriesStorage::<GetUserAge>::invalidate_matching(*user_id).await;
-    }
+// NEW: Most ergonomic derive syntax!
+#[derive(Query)] // Clone, PartialEq, Eq, Hash are derived by Query
+#[query(ok = i32, err = (), key = usize)]
+struct GetUserAge {
+    client: Captured<FancyClient>,
 }
 
-#[derive(Clone, PartialEq, Hash, Eq)]
-struct GetUserAge(Captured<FancyClient>);
-
-impl QueryCapability for GetUserAge {
-    type Ok = i32;
-    type Err = ();
-    type Keys = usize;
-
-    async fn run(&self, user_id: &Self::Keys) -> Result<Self::Ok, Self::Err> {
+impl GetUserAge {
+    async fn run(&self, user_id: &usize) -> Result<i32, ()> {
         println!("Fetching age of user {user_id}");
         sleep(Duration::from_millis(1000)).await;
         match user_id {
-            0 => Ok(self.0.age()),
+            0 => Ok(self.client.age()), // Corrected: No .0 needed due to Deref on Captured
             _ => Err(()),
         }
+    }
+}
+
+#[derive(Mutation)]
+#[mutation(ok = i32, err = (), key = usize)]
+struct SetUserAge {
+    client: Captured<FancyClient>,
+}
+
+// User still defines the run logic and any specific lifecycle methods
+impl SetUserAge {
+    async fn run(&self, user_id: &usize) -> Result<i32, ()> {
+        println!("Updating age of user {user_id}");
+        sleep(Duration::from_millis(400)).await;
+        let curr_age = self.client.age();
+        self.client.set_age(curr_age + 1);
+        match user_id {
+            0 => Ok(self.client.age()),
+            _ => Err(()),
+        }
+    }
+
+    async fn on_settled(&self, user_id: &usize, _result: &Result<i32, ()>) {
+        QueriesStorage::<GetUserAge>::invalidate_matching(*user_id).await;
     }
 }
 
@@ -82,7 +82,13 @@ fn User(id: usize) -> Element {
     let fancy_client = use_context::<FancyClient>();
 
     let user_age = use_query(
-        Query::new(id, GetUserAge(Captured(fancy_client))).stale_time(Duration::from_secs(4)),
+        Query::new(
+            id,
+            GetUserAge {
+                client: Captured(fancy_client.clone()),
+            },
+        )
+        .stale_time(Duration::from_secs(4)),
     );
 
     println!("Rendering user {id}");
@@ -95,7 +101,9 @@ fn User(id: usize) -> Element {
 fn app() -> Element {
     let fancy_client = use_context_provider(FancyClient::default);
 
-    let set_user_age = use_mutation(Mutation::new(SetUserAge(Captured(fancy_client))));
+    let set_user_age = use_mutation(Mutation::new(SetUserAge {
+        client: Captured(fancy_client.clone()),
+    }));
 
     let increase_age = move |_| async move {
         set_user_age.mutate_async(0).await;
@@ -104,6 +112,8 @@ fn app() -> Element {
     rsx!(
         User { id: 0 }
         User { id: 0 }
-        button { onclick: increase_age, label { "Increse age" } }
+        button { onclick: increase_age,
+            label { "Increse age" }
+        }
     )
 }

@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Attribute, Data, DeriveInput, Field, Fields};
+use syn::{parse_macro_input, Data, DeriveInput, Field, Fields, Lit, Meta, MetaNameValue};
 
 /// Derive macro for automatically implementing QueryCapability
 ///
@@ -19,36 +19,22 @@ use syn::{parse_macro_input, Attribute, Data, DeriveInput, Field, Fields};
 /// ```
 #[proc_macro_derive(Query, attributes(query))]
 pub fn derive_query(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    let name = &input.ident;
-
-    // Extract the struct fields to understand the captured context
-    let fields = match &input.data {
-        Data::Struct(data) => match &data.fields {
-            Fields::Named(fields) => &fields.named,
-            _ => {
-                return syn::Error::new_spanned(
-                    &input,
-                    "Query derive macro only supports structs with named fields",
-                )
-                .to_compile_error()
-                .into();
-            }
-        },
-        _ => {
-            return syn::Error::new_spanned(&input, "Query derive macro only supports structs")
-                .to_compile_error()
-                .into();
-        }
+    let derive_input = parse_macro_input!(input as DeriveInput);
+    let (name, fields) = match extract_name_and_fields(&derive_input) {
+        Ok(val) => val,
+        Err(err) => return err.to_compile_error().into(),
     };
 
-    // Find the key type from attributes or default to usize
-    let key_type = extract_key_type(&input.attrs).unwrap_or_else(|| quote! { usize });
-    let ok_type = extract_ok_type(&input.attrs).unwrap_or_else(|| quote! { String });
-    let err_type = extract_err_type(&input.attrs).unwrap_or_else(|| quote! { () });
+    let DeriveAttributeValues {
+        key_type,
+        ok_type,
+        err_type,
+    } = match extract_attribute_values(&derive_input.attrs, "query", quote! {String}) {
+        Ok(val) => val,
+        Err(err) => return err.to_compile_error().into(),
+    };
 
-    // Generate the captured fields initialization
-    let captured_fields = generate_captured_fields(fields);
+    let captured_fields = generate_captured_fields(&fields);
 
     let expanded = quote! {
         impl ::dioxus_query::query::QueryCapability for #name {
@@ -87,57 +73,6 @@ pub fn derive_query(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-fn extract_key_type(attrs: &[Attribute]) -> Option<proc_macro2::TokenStream> {
-    for attr in attrs {
-        if attr.path().is_ident("query") {
-            if let Ok(meta) = attr.parse_args::<syn::Meta>() {
-                if let syn::Meta::NameValue(nv) = meta {
-                    if nv.path.is_ident("key") {
-                        if let syn::Expr::Path(path) = nv.value {
-                            return Some(quote! { #path });
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-fn extract_ok_type(attrs: &[Attribute]) -> Option<proc_macro2::TokenStream> {
-    for attr in attrs {
-        if attr.path().is_ident("query") {
-            if let Ok(meta) = attr.parse_args::<syn::Meta>() {
-                if let syn::Meta::NameValue(nv) = meta {
-                    if nv.path.is_ident("ok") {
-                        if let syn::Expr::Path(path) = nv.value {
-                            return Some(quote! { #path });
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-fn extract_err_type(attrs: &[Attribute]) -> Option<proc_macro2::TokenStream> {
-    for attr in attrs {
-        if attr.path().is_ident("query") {
-            if let Ok(meta) = attr.parse_args::<syn::Meta>() {
-                if let syn::Meta::NameValue(nv) = meta {
-                    if nv.path.is_ident("err") {
-                        if let syn::Expr::Path(path) = nv.value {
-                            return Some(quote! { #path });
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 fn generate_captured_fields(
     fields: &syn::punctuated::Punctuated<Field, syn::token::Comma>,
 ) -> proc_macro2::TokenStream {
@@ -147,4 +82,204 @@ fn generate_captured_fields(
     });
 
     quote! { #(#field_clones),* }
+}
+
+#[proc_macro_derive(Mutation, attributes(mutation))]
+pub fn derive_mutation(input: TokenStream) -> TokenStream {
+    let derive_input = parse_macro_input!(input as DeriveInput);
+    let (name, fields) = match extract_name_and_fields(&derive_input) {
+        Ok(val) => val,
+        Err(err) => return err.to_compile_error().into(),
+    };
+
+    let DeriveAttributeValues {
+        key_type,
+        ok_type,
+        err_type,
+    } = match extract_attribute_values(&derive_input.attrs, "mutation", quote! {()}) {
+        Ok(val) => val,
+        Err(err) => return err.to_compile_error().into(),
+    };
+
+    let captured_fields = generate_captured_fields(&fields);
+
+    let expanded = quote! {
+        impl ::dioxus_query::mutation::MutationCapability for #name {
+            type Ok = #ok_type;
+            type Err = #err_type;
+            type Keys = #key_type;
+
+            async fn run(&self, key: &Self::Keys) -> Result<Self::Ok, Self::Err> {
+                self.run(key).await
+            }
+
+            // Add forwarding for on_settled
+            async fn on_settled(&self, keys: &Self::Keys, result: &Result<Self::Ok, Self::Err>) {
+                // This assumes the user has an inherent method `on_settled` with the same signature.
+                // If not, this will cause a compile error, which is a way to enforce the contract.
+                // A more advanced macro could check for the method's existence and provide a true default if not found.
+                self.on_settled(keys, result).await
+            }
+        }
+
+        impl ::std::clone::Clone for #name {
+            fn clone(&self) -> Self {
+                Self {
+                    #captured_fields
+                }
+            }
+        }
+
+        impl ::std::cmp::PartialEq for #name {
+            fn eq(&self, other: &Self) -> bool {
+                // TODO: Compare fields if they are PartialEq
+                // For now, to ensure proper re-rendering on state change in captured values,
+                // we should compare the captured fields if possible.
+                // However, the original Query derive had `true`, so we'll start there.
+                // This might need refinement based on how Captured<T>'s PartialEq works.
+                true
+            }
+        }
+
+        impl ::std::cmp::Eq for #name {}
+
+        impl ::std::hash::Hash for #name {
+            fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
+                stringify!(#name).hash(state);
+                // TODO: Hash fields if they are Hash
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+// Helper function to extract struct name and fields
+fn extract_name_and_fields(
+    input: &DeriveInput,
+) -> Result<
+    (
+        &syn::Ident,
+        &syn::punctuated::Punctuated<Field, syn::token::Comma>,
+    ),
+    syn::Error,
+> {
+    let name = &input.ident;
+    let fields = match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(fields) => &fields.named,
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    input,
+                    "This derive macro only supports structs with named fields",
+                ));
+            }
+        },
+        _ => {
+            return Err(syn::Error::new_spanned(
+                input,
+                "This derive macro only supports structs",
+            ));
+        }
+    };
+    Ok((name, fields))
+}
+
+struct DeriveAttributeValues {
+    key_type: proc_macro2::TokenStream,
+    ok_type: proc_macro2::TokenStream,
+    err_type: proc_macro2::TokenStream,
+}
+
+// Helper function to extract attribute values (key, ok, err)
+fn extract_attribute_values(
+    attrs: &[syn::Attribute],
+    attribute_name: &str, // "query" or "mutation"
+    default_ok_type: proc_macro2::TokenStream,
+) -> Result<DeriveAttributeValues, syn::Error> {
+    let mut key_type = quote! { usize };
+    let mut ok_type = default_ok_type;
+    let mut err_type = quote! { () };
+
+    for attr in attrs {
+        if attr.path().is_ident(attribute_name) {
+            match attr.parse_args_with(
+                syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
+            ) {
+                Ok(meta_list) => {
+                    for meta_item in meta_list {
+                        if let Meta::NameValue(MetaNameValue { path, value, .. }) = meta_item {
+                            let ident_name = path.get_ident().map(|i| i.to_string());
+                            match ident_name.as_deref() {
+                                Some("key") => {
+                                    if let syn::Expr::Path(expr_path) = value {
+                                        key_type = quote! { #expr_path };
+                                    } else if let syn::Expr::Lit(lit) = value {
+                                        if let Lit::Str(lit_str) = lit.lit {
+                                            let type_ident: syn::Type =
+                                                syn::parse_str(&lit_str.value()).map_err(|e| {
+                                                    syn::Error::new_spanned(
+                                                        lit_str,
+                                                        format!(
+                                                            "Failed to parse key type string: {}",
+                                                            e
+                                                        ),
+                                                    )
+                                                })?;
+                                            key_type = quote! { #type_ident };
+                                        }
+                                    }
+                                }
+                                Some("ok") => {
+                                    if let syn::Expr::Path(expr_path) = value {
+                                        ok_type = quote! { #expr_path };
+                                    } else if let syn::Expr::Lit(lit) = value {
+                                        if let Lit::Str(lit_str) = lit.lit {
+                                            let type_ident: syn::Type =
+                                                syn::parse_str(&lit_str.value()).map_err(|e| {
+                                                    syn::Error::new_spanned(
+                                                        lit_str,
+                                                        format!(
+                                                            "Failed to parse ok type string: {}",
+                                                            e
+                                                        ),
+                                                    )
+                                                })?;
+                                            ok_type = quote! { #type_ident };
+                                        }
+                                    }
+                                }
+                                Some("err") => {
+                                    if let syn::Expr::Path(expr_path) = value {
+                                        err_type = quote! { #expr_path };
+                                    } else if let syn::Expr::Lit(lit) = value {
+                                        if let Lit::Str(lit_str) = lit.lit {
+                                            let type_ident: syn::Type =
+                                                syn::parse_str(&lit_str.value()).map_err(|e| {
+                                                    syn::Error::new_spanned(
+                                                        lit_str,
+                                                        format!(
+                                                            "Failed to parse err type string: {}",
+                                                            e
+                                                        ),
+                                                    )
+                                                })?;
+                                            err_type = quote! { #type_ident };
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+    Ok(DeriveAttributeValues {
+        key_type,
+        ok_type,
+        err_type,
+    })
 }
