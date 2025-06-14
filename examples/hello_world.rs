@@ -22,7 +22,9 @@ impl FancyClient {
     }
 }
 
+// NEW: Most ergonomic derive syntax!
 #[derive(Query)]
+#[query(ok = String, err = (), key = usize)]
 struct GetUserName {
     client: FancyClient,
 }
