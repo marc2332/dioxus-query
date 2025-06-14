@@ -22,15 +22,12 @@ impl FancyClient {
     }
 }
 
-#[derive(Clone, PartialEq, Hash, Eq)]
+#[derive(Query)]
+#[query(ok = String, err = (), key = usize)]
 struct GetUserName(Captured<FancyClient>);
 
-impl QueryCapability for GetUserName {
-    type Ok = String;
-    type Err = ();
-    type Keys = usize;
-
-    async fn run(&self, user_id: &Self::Keys) -> Result<Self::Ok, Self::Err> {
+impl GetUserName {
+    async fn run(&self, user_id: &usize) -> Result<String, ()> {
         println!("Fetching name of user {user_id}");
         sleep(Duration::from_millis(650)).await;
         match user_id {

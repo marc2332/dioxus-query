@@ -87,6 +87,8 @@ fn app() -> Element {
     rsx!(
         User { id: 0 }
         User { id: 0 }
-        button { onclick: refresh, label { "Refresh" } }
+        button { onclick: refresh,
+            label { "Refresh" }
+        }
     )
 }
