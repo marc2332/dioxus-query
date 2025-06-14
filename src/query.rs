@@ -19,7 +19,11 @@ use dioxus_lib::{
     signals::CopyValue,
 };
 use futures_util::stream::{FuturesUnordered, StreamExt};
-use tokio::{sync::Notify, time::Instant};
+use tokio::sync::Notify;
+#[cfg(not(target_family = "wasm"))]
+use tokio::time;
+#[cfg(target_family = "wasm")]
+use wasmtimer::tokio as time;
 
 pub trait QueryCapability
 where
@@ -46,7 +50,7 @@ pub enum QueryStateData<Q: QueryCapability> {
     /// Is not loading and has a settled value.
     Settled {
         res: Result<Q::Ok, Q::Err>,
-        settlement_instant: Instant,
+        settlement_instant: time::Instant,
     },
 }
 
@@ -105,7 +109,7 @@ impl<Q: QueryCapability> QueryStateData<Q> {
             QueryStateData::Loading { .. } => true,
             QueryStateData::Settled {
                 settlement_instant, ..
-            } => Instant::now().duration_since(*settlement_instant) >= query.stale_time,
+            } => time::Instant::now().duration_since(*settlement_instant) >= query.stale_time,
         }
     }
 
@@ -296,7 +300,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             // Set to Settled
             *query_data.state.borrow_mut() = QueryStateData::Settled {
                 res,
-                settlement_instant: Instant::now(),
+                settlement_instant: time::Instant::now(),
             };
             for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
                 reactive_context.mark_dirty();
@@ -382,7 +386,7 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
                 // Set to settled
                 *query_data.state.borrow_mut() = QueryStateData::Settled {
                     res,
-                    settlement_instant: Instant::now(),
+                    settlement_instant: time::Instant::now(),
                 };
                 for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
                     reactive_context.mark_dirty();
