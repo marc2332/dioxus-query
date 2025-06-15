@@ -16,7 +16,14 @@ use dioxus_lib::{
     hooks::{use_memo, use_reactive},
     signals::CopyValue,
 };
+#[cfg(not(target_family = "wasm"))]
+use tokio::time;
+#[cfg(not(target_family = "wasm"))]
 use tokio::time::Instant;
+#[cfg(target_family = "wasm")]
+use wasmtimer::tokio as time;
+#[cfg(target_family = "wasm")]
+use web_time::Instant;
 
 pub trait MutationCapability
 where
@@ -182,7 +189,7 @@ impl<Q: MutationCapability> MutationsStorage<Q> {
         if mutation_data.reactive_contexts.lock().unwrap().is_empty() {
             *mutation_data.clean_task.borrow_mut() = spawn_forever(async move {
                 // Wait as long as the stale time is configured
-                tokio::time::sleep(mutation.clean_time).await;
+                time::sleep(mutation.clean_time).await;
 
                 // Finally clear the mutation
                 let mut storage = storage_clone.write();
