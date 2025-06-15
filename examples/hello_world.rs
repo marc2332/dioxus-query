@@ -22,19 +22,19 @@ impl FancyClient {
     }
 }
 
-#[derive(Clone, PartialEq, Hash, Eq)]
-struct GetUserName(Captured<FancyClient>);
+// NEW: Most ergonomic derive syntax!
+#[derive(Query)]
+#[query(ok = String, err = (), key = usize)]
+struct GetUserName {
+    client: FancyClient,
+}
 
-impl QueryCapability for GetUserName {
-    type Ok = String;
-    type Err = ();
-    type Keys = usize;
-
-    async fn run(&self, user_id: &Self::Keys) -> Result<Self::Ok, Self::Err> {
+impl GetUserName {
+    async fn run(&self, user_id: &usize) -> Result<String, ()> {
         println!("Fetching name of user {user_id}");
         sleep(Duration::from_millis(650)).await;
         match user_id {
-            0 => Ok(self.0.name().to_string()),
+            0 => Ok(self.client.name().to_string()),
             _ => Err(()),
         }
     }
@@ -43,7 +43,12 @@ impl QueryCapability for GetUserName {
 #[allow(non_snake_case)]
 #[component]
 fn User(id: usize) -> Element {
-    let user_name = use_query(Query::new(id, GetUserName(Captured(FancyClient))));
+    let user_name = use_query(Query::new(
+        id,
+        GetUserName {
+            client: FancyClient,
+        },
+    ));
 
     println!("Rendering user {id}");
 
@@ -60,6 +65,8 @@ fn app() -> Element {
     rsx!(
         User { id: 0 }
         User { id: 0 }
-        button { onclick: refresh, label { "Refresh" } }
+        button { onclick: refresh,
+            label { "Refresh" }
+        }
     )
 }

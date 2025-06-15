@@ -12,15 +12,12 @@ fn main() {
     launch(app);
 }
 
-#[derive(Clone, PartialEq, Hash, Eq)]
+#[derive(Query)]
+#[query(ok = SystemTime, err = (), key = "()")]
 struct GetTime;
 
-impl QueryCapability for GetTime {
-    type Ok = SystemTime;
-    type Err = ();
-    type Keys = ();
-
-    async fn run(&self, _: &Self::Keys) -> Result<Self::Ok, Self::Err> {
+impl GetTime {
+    async fn run(&self, _: &()) -> Result<SystemTime, ()> {
         Ok(SystemTime::now())
     }
 }
