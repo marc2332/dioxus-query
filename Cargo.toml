@@ -23,5 +23,5 @@ web-time = "1.1.0"
 tokio = { version = "^1", features = ["sync"] }
 
 [dev-dependencies]
-dioxus = { version = "0.6", features = ["desktop"] }
+dioxus = { version = "0.7.0-alpha.3", features = ["desktop"] }
 tokio = { version = "^1", features = ["time"] }
