@@ -1,7 +1,7 @@
 [package]
 name = "dioxus-query"
 description = "Fully-typed, async, reusable cached state management for Dioxus 🧬"
-version = "0.8.1"
+version = "0.9.0"
 edition = "2021"
 license = "MIT"
 authors = ["Marc Espín <mespinsanz@gmail.com>"]
@@ -12,9 +12,9 @@ keywords = ["dioxus", "async", "state", "synchronization"]
 categories = ["gui", "asynchronous"]
 
 [dependencies]
-dioxus-lib = { version = "0.6", default-features = false, features = ["macro", "hooks", "signals"] }
+dioxus = { version = "0.7.0-alpha.3", default-features = false, features = ["macro", "hooks", "signals"] }
+dioxus-core = { version = "0.7.0-alpha.3", default-features = false }
 futures-util = "0.3.28"
-warnings = "0.2.1"
 tokio = { version = "^1", features = ["sync", "time"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
