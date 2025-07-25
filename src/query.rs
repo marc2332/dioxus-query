@@ -168,6 +168,11 @@ pub struct QueryData<Q: QueryCapability> {
     suspense_task: Rc<RefCell<Option<QuerySuspenseData>>>,
     interval_task: Rc<RefCell<Option<(Duration, Task)>>>,
     clean_task: Rc<RefCell<Option<Task>>>,
+
+    #[cfg(any(feature = "web", feature = "server"))]
+    storage_entry: Rc<
+        RefCell<Option<dioxus_fullstack_protocol::SerializeContextEntry<Result<Q::Ok, Q::Err>>>>,
+    >,
 }
 
 impl<Q: QueryCapability> Clone for QueryData<Q> {
@@ -179,6 +184,9 @@ impl<Q: QueryCapability> Clone for QueryData<Q> {
             suspense_task: self.suspense_task.clone(),
             interval_task: self.interval_task.clone(),
             clean_task: self.clean_task.clone(),
+
+            #[cfg(any(feature = "web", feature = "server"))]
+            storage_entry: self.storage_entry.clone(),
         }
     }
 }
@@ -200,6 +208,8 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             suspense_task: Rc::default(),
             interval_task: Rc::default(),
             clean_task: Rc::default(),
+            #[cfg(any(feature = "web", feature = "server"))]
+            storage_entry: Rc::default(),
         });
         let query_data_clone = query_data.clone();
 
@@ -235,6 +245,85 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
 
                     // Run the query
                     QueriesStorage::<Q>::run_queries(&[(&query_clone, &query_data_clone)]).await;
+                }
+            })
+            .expect("Failed to spawn interval task.");
+            *interval_task = Some((interval, task));
+        }
+
+        query_data.clone()
+    }
+
+    #[cfg(any(feature = "web", feature = "server"))]
+    fn insert_or_get_server_query(&mut self, query: Query<Q>) -> QueryData<Q>
+    where
+        Q::Ok: serde::Serialize + serde::de::DeserializeOwned,
+        Q::Err: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let query_clone = query.clone();
+        let mut storage = self.storage.write();
+
+        let query_data = storage.entry(query).or_insert_with(|| {
+            #[cfg(any(feature = "web", feature = "server"))]
+            let serialize_context = dioxus_fullstack_protocol::serialize_context();
+            #[cfg(any(feature = "web", feature = "server"))]
+            let storage_entry = serialize_context.create_entry::<Result<Q::Ok, Q::Err>>();
+
+            let mut state = QueryStateData::Pending;
+
+            #[cfg(feature = "web")]
+            if let Ok(res) = storage_entry.get() {
+                state = QueryStateData::Settled {
+                    res,
+                    settlement_instant: Instant::now(),
+                };
+            }
+
+            QueryData {
+                state: Rc::new(RefCell::new(state)),
+                reactive_contexts: Arc::default(),
+                suspense_task: Rc::default(),
+                interval_task: Rc::default(),
+                clean_task: Rc::default(),
+                #[cfg(any(feature = "web", feature = "server"))]
+                storage_entry: Rc::new(RefCell::new(Some(storage_entry))),
+            }
+        });
+        let query_data_clone = query_data.clone();
+
+        // Cancel clean task
+        if let Some(clean_task) = query_data.clean_task.take() {
+            clean_task.cancel();
+        }
+
+        // Start an interval task if necessary
+        // If multiple queries subscribers use different intervals the interval task
+        // will run using the shortest interval
+        let interval = query_clone.interval_time;
+        let interval_enabled = query_clone.interval_time != Duration::MAX;
+        let interval_task = &mut *query_data.interval_task.borrow_mut();
+
+        let create_interval_task = match interval_task {
+            None if interval_enabled => true,
+            Some((current_interval, current_interval_task)) if interval_enabled => {
+                let new_interval_is_shorter = *current_interval > interval;
+                if new_interval_is_shorter {
+                    current_interval_task.cancel();
+                    *interval_task = None;
+                }
+                new_interval_is_shorter
+            }
+            _ => false,
+        };
+        if create_interval_task {
+            let task = spawn_forever(async move {
+                loop {
+                    // Wait as long as the stale time is configured
+                    time::sleep(interval).await;
+
+                    // Run the query
+                    QueriesStorage::<Q>::run_server_queries(&[(&query_clone, &query_data_clone)])
+                        .await;
                 }
             })
             .expect("Failed to spawn interval task.");
@@ -286,6 +375,8 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
                 suspense_task: Rc::default(),
                 interval_task: Rc::default(),
                 clean_task: Rc::default(),
+                #[cfg(any(feature = "web", feature = "server"))]
+                storage_entry: Rc::default(),
             })
             .clone();
 
@@ -387,6 +478,54 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             tasks.push(Box::pin(async move {
                 // Run
                 let res = query.query.run(&query.keys).await;
+
+                // Set to settled
+                *query_data.state.borrow_mut() = QueryStateData::Settled {
+                    res,
+                    settlement_instant: Instant::now(),
+                };
+                for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
+                    reactive_context.mark_dirty();
+                }
+
+                // Notify the suspense task if any
+                if let Some(suspense_task) = &*query_data.suspense_task.borrow() {
+                    suspense_task.notifier.notify_waiters();
+                };
+            }));
+        }
+
+        tasks.count().await;
+    }
+
+    #[cfg(any(feature = "web", feature = "server"))]
+    async fn run_server_queries(queries: &[(&Query<Q>, &QueryData<Q>)])
+    where
+        Q::Ok: serde::Serialize + serde::de::DeserializeOwned,
+        Q::Err: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let tasks = FuturesUnordered::new();
+
+        for (query, query_data) in queries {
+            // Set to Loading
+            let res = mem::replace(&mut *query_data.state.borrow_mut(), QueryStateData::Pending)
+                .into_loading();
+            *query_data.state.borrow_mut() = res;
+            for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
+                reactive_context.mark_dirty();
+            }
+
+            tasks.push(Box::pin(async move {
+                // Run
+                let res = query.query.run(&query.keys).await;
+
+                // Cache the data if on the server
+                #[cfg(feature = "server")]
+                if let Some(storage_entry) = &mut *query_data.storage_entry.borrow_mut() {
+                    storage_entry
+                        .clone()
+                        .insert(&res, std::panic::Location::caller());
+                }
 
                 // Set to settled
                 *query_data.state.borrow_mut() = QueryStateData::Settled {
@@ -722,6 +861,51 @@ pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
 
     let query = use_memo(use_reactive!(|query| {
         let query_data = storage.insert_or_get_query(query.clone());
+
+        // Update the query tasks if there has been a change in the query
+        if let Some(prev_query) = current_query.borrow_mut().take() {
+            storage.update_tasks(prev_query);
+        }
+
+        // Store this new query
+        current_query.borrow_mut().replace(query.clone());
+
+        // Immediately run the query if enabled and the value is stale
+        if query.enabled && query_data.state.borrow().is_stale(&query) {
+            let query = query.clone();
+            spawn(async move {
+                QueriesStorage::run_queries(&[(&query, &query_data)]).await;
+            });
+        }
+
+        query
+    }));
+
+    // Update the query tasks when the scope is dropped
+    use_drop({
+        move || {
+            storage.update_tasks(query.peek().clone());
+        }
+    });
+
+    UseQuery { query }
+}
+
+#[cfg(any(feature = "web", feature = "server"))]
+pub fn use_server_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q>
+where
+    Q::Ok: serde::Serialize + serde::de::DeserializeOwned,
+    Q::Err: serde::Serialize + serde::de::DeserializeOwned,
+{
+    let mut storage = match try_consume_context::<QueriesStorage<Q>>() {
+        Some(storage) => storage,
+        None => provide_root_context(QueriesStorage::<Q>::new_in_root()),
+    };
+
+    let current_query = use_hook(|| Rc::new(RefCell::new(None)));
+
+    let query = use_memo(use_reactive!(|query| {
+        let query_data = storage.insert_or_get_server_query(query.clone());
 
         // Update the query tasks if there has been a change in the query
         if let Some(prev_query) = current_query.borrow_mut().take() {
