@@ -919,7 +919,7 @@ where
         if query.enabled && query_data.state.borrow().is_stale(&query) {
             let query = query.clone();
             spawn(async move {
-                QueriesStorage::run_queries(&[(&query, &query_data)]).await;
+                QueriesStorage::run_server_queries(&[(&query, &query_data)]).await;
             });
         }
 
