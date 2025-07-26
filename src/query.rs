@@ -161,6 +161,10 @@ struct QuerySuspenseData {
     task: Task,
 }
 
+#[cfg(any(feature = "web", feature = "server"))]
+type QueryStorageEntry<Ok, Err> =
+    Option<dioxus_fullstack_protocol::SerializeContextEntry<Result<Ok, Err>>>;
+
 pub struct QueryData<Q: QueryCapability> {
     state: Rc<RefCell<QueryStateData<Q>>>,
     reactive_contexts: Arc<Mutex<HashSet<ReactiveContext>>>,
@@ -170,9 +174,7 @@ pub struct QueryData<Q: QueryCapability> {
     clean_task: Rc<RefCell<Option<Task>>>,
 
     #[cfg(any(feature = "web", feature = "server"))]
-    storage_entry: Rc<
-        RefCell<Option<dioxus_fullstack_protocol::SerializeContextEntry<Result<Q::Ok, Q::Err>>>>,
-    >,
+    storage_entry: Rc<RefCell<QueryStorageEntry<Q::Ok, Q::Err>>>,
 }
 
 impl<Q: QueryCapability> Clone for QueryData<Q> {
@@ -521,10 +523,8 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
 
                 // Cache the data if on the server
                 #[cfg(feature = "server")]
-                if let Some(storage_entry) = &mut *query_data.storage_entry.borrow_mut() {
-                    storage_entry
-                        .clone()
-                        .insert(&res, std::panic::Location::caller());
+                if let Some(storage_entry) = query_data.storage_entry.borrow_mut().take() {
+                    storage_entry.insert(&res, std::panic::Location::caller());
                 }
 
                 // Set to settled
