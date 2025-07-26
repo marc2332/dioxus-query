@@ -11,11 +11,20 @@ repository = "https://github.com/marc2332/dioxus-query"
 keywords = ["dioxus", "async", "state", "synchronization"]
 categories = ["gui", "asynchronous"]
 
+[features]
+server = ["dep:dioxus-fullstack", "dep:dioxus-fullstack-protocol", "serde"]
+web = ["dep:dioxus-fullstack-protocol", "serde"]
+
 [dependencies]
 dioxus = { version = "0.7.0-alpha.3", default-features = false, features = ["macro", "hooks", "signals"] }
 dioxus-core = { version = "0.7.0-alpha.3", default-features = false }
 futures-util = "0.3.28"
 tokio = { version = "^1", features = ["sync", "time"] }
+
+# Fullstack
+dioxus-fullstack = { version = "0.7.0-alpha.3", optional = true }
+dioxus-fullstack-protocol = { version = "0.7.0-alpha.3", optional = true }
+serde = { version = "1.0.219", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasmtimer = "0.4.1"
