@@ -10,16 +10,24 @@ use std::{
     time::Duration,
 };
 
-use ::warnings::Warning;
-use dioxus_lib::prelude::Task;
-use dioxus_lib::prelude::*;
-use dioxus_lib::signals::{Readable, Writable};
-use dioxus_lib::{
+use dioxus::prelude::*;
+use dioxus::{
     hooks::{use_memo, use_reactive},
     signals::CopyValue,
 };
+use dioxus_core::{
+    provide_root_context, spawn_forever, use_drop, ReactiveContext, SuspendedFuture, Task,
+};
 use futures_util::stream::{FuturesUnordered, StreamExt};
-use tokio::{sync::Notify, time::Instant};
+use tokio::sync::Notify;
+#[cfg(not(target_family = "wasm"))]
+use tokio::time;
+#[cfg(not(target_family = "wasm"))]
+use tokio::time::Instant;
+#[cfg(target_family = "wasm")]
+use wasmtimer::tokio as time;
+#[cfg(target_family = "wasm")]
+use web_time::Instant;
 
 pub trait QueryCapability
 where
@@ -222,13 +230,12 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             let task = spawn_forever(async move {
                 loop {
                     // Wait as long as the stale time is configured
-                    tokio::time::sleep(interval).await;
+                    time::sleep(interval).await;
 
                     // Run the query
                     QueriesStorage::<Q>::run_queries(&[(&query_clone, &query_data_clone)]).await;
                 }
-            })
-            .expect("Failed to spawn interval task.");
+            });
             *interval_task = Some((interval, task));
         }
 
@@ -248,14 +255,14 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
 
         // Spawn clean up task if there no more reactive contexts
         if query_data.reactive_contexts.lock().unwrap().is_empty() {
-            *query_data.clean_task.borrow_mut() = spawn_forever(async move {
+            *query_data.clean_task.borrow_mut() = Some(spawn_forever(async move {
                 // Wait as long as the stale time is configured
-                tokio::time::sleep(query.clean_time).await;
+                time::sleep(query.clean_time).await;
 
                 // Finally clear the query
                 let mut storage = storage_clone.write();
                 storage.remove(&query);
-            });
+            }));
         }
     }
 
@@ -301,23 +308,23 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
             for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
                 reactive_context.mark_dirty();
             }
-        }
 
-        // Notify the suspense task if any
-        if let Some(suspense_task) = &*query_data.suspense_task.borrow() {
-            suspense_task.notifier.notify_waiters();
-        };
+            // Notify the suspense task if any
+            if let Some(suspense_task) = &*query_data.suspense_task.borrow() {
+                suspense_task.notifier.notify_waiters();
+            };
+        }
 
         // Spawn clean up task if there no more reactive contexts
         if query_data.reactive_contexts.lock().unwrap().is_empty() {
-            *query_data.clean_task.borrow_mut() = spawn_forever(async move {
+            *query_data.clean_task.borrow_mut() = Some(spawn_forever(async move {
                 // Wait as long as the stale time is configured
-                tokio::time::sleep(query.clean_time).await;
+                time::sleep(query.clean_time).await;
 
                 // Finally clear the query
                 let mut storage = storage.storage.write();
                 storage.remove(&query);
-            });
+            }));
         }
 
         QueryReader {
@@ -387,6 +394,11 @@ impl<Q: QueryCapability> QueriesStorage<Q> {
                 for reactive_context in query_data.reactive_contexts.lock().unwrap().iter() {
                     reactive_context.mark_dirty();
                 }
+
+                // Notify the suspense task if any
+                if let Some(suspense_task) = &*query_data.suspense_task.borrow() {
+                    suspense_task.notifier.notify_waiters();
+                };
             }));
         }
 
@@ -597,9 +609,6 @@ impl<Q: QueryCapability> UseQuery<Q> {
         Q::Ok: Clone,
         Q::Err: Clone,
     {
-        let _allow_write_in_component_body =
-            ::warnings::Allow::new(warnings::signal_write_in_component_body::ID);
-
         let storage = consume_context::<QueriesStorage<Q>>();
         let mut storage = storage.storage.write_unchecked();
         let query_data = storage.get_mut(&self.query.peek()).unwrap();
