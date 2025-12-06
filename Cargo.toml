@@ -12,8 +12,8 @@ keywords = ["dioxus", "async", "state", "synchronization"]
 categories = ["gui", "asynchronous"]
 
 [dependencies]
-dioxus = { version = "0.7.0-alpha.3", default-features = false, features = ["macro", "hooks", "signals"] }
-dioxus-core = { version = "0.7.0-alpha.3", default-features = false }
+dioxus = { version = "0.7.0", default-features = false, features = ["macro", "hooks", "signals"] }
+dioxus-core = { version = "0.7.0", default-features = false }
 futures-util = "0.3.28"
 tokio = { version = "^1", features = ["sync", "time"] }
 
@@ -23,5 +23,5 @@ web-time = "1.1.0"
 tokio = { version = "^1", features = ["sync"] }
 
 [dev-dependencies]
-dioxus = { version = "0.7.0-alpha.3", features = ["desktop"] }
+dioxus = { version = "0.7.0", features = ["desktop"] }
 tokio = { version = "^1", features = ["time"] }

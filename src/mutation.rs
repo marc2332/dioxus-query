@@ -1,6 +1,5 @@
 use core::fmt;
 use dioxus::prelude::*;
-use dioxus::signals::{Readable, Writable};
 use dioxus::{
     hooks::{use_memo, use_reactive},
     signals::CopyValue,
@@ -187,14 +186,14 @@ impl<Q: MutationCapability> MutationsStorage<Q> {
 
         // Spawn clean up task if there no more reactive contexts
         if mutation_data.reactive_contexts.lock().unwrap().is_empty() {
-            *mutation_data.clean_task.borrow_mut() = spawn_forever(async move {
+            *mutation_data.clean_task.borrow_mut() = Some(spawn_forever(async move {
                 // Wait as long as the stale time is configured
                 time::sleep(mutation.clean_time).await;
 
                 // Finally clear the mutation
                 let mut storage = storage_clone.write();
                 storage.remove(&mutation);
-            });
+            }));
         }
     }
 
