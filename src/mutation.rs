@@ -1,4 +1,10 @@
 use core::fmt;
+use dioxus::prelude::*;
+use dioxus::{
+    hooks::{use_memo, use_reactive},
+    signals::CopyValue,
+};
+use dioxus_core::{provide_root_context, spawn_forever, use_drop, ReactiveContext, Task};
 use std::{
     cell::{Ref, RefCell},
     collections::{HashMap, HashSet},
@@ -8,13 +14,6 @@ use std::{
     rc::Rc,
     sync::{Arc, Mutex},
     time::Duration,
-};
-
-use dioxus_lib::prelude::*;
-use dioxus_lib::signals::{Readable, Writable};
-use dioxus_lib::{
-    hooks::{use_memo, use_reactive},
-    signals::CopyValue,
 };
 #[cfg(not(target_family = "wasm"))]
 use tokio::time;
@@ -187,14 +186,14 @@ impl<Q: MutationCapability> MutationsStorage<Q> {
 
         // Spawn clean up task if there no more reactive contexts
         if mutation_data.reactive_contexts.lock().unwrap().is_empty() {
-            *mutation_data.clean_task.borrow_mut() = spawn_forever(async move {
+            *mutation_data.clean_task.borrow_mut() = Some(spawn_forever(async move {
                 // Wait as long as the stale time is configured
                 time::sleep(mutation.clean_time).await;
 
                 // Finally clear the mutation
                 let mut storage = storage_clone.write();
                 storage.remove(&mutation);
-            });
+            }));
         }
     }
 
