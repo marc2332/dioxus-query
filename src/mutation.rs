@@ -1,9 +1,6 @@
 use core::fmt;
 use dioxus::prelude::*;
-use dioxus::{
-    hooks::{use_memo, use_reactive},
-    signals::CopyValue,
-};
+use dioxus::signals::CopyValue;
 use dioxus_core::{provide_root_context, spawn_forever, use_drop, ReactiveContext, Task};
 use std::{
     cell::{Ref, RefCell},
@@ -262,7 +259,7 @@ impl<Q: MutationCapability> MutationReader<Q> {
 }
 
 pub struct UseMutation<Q: MutationCapability> {
-    mutation: Memo<Mutation<Q>>,
+    mutation: Signal<Mutation<Q>>,
 }
 
 impl<Q: MutationCapability> Clone for UseMutation<Q> {
@@ -370,29 +367,33 @@ pub fn use_mutation<Q: MutationCapability>(mutation: Mutation<Q>) -> UseMutation
         None => provide_root_context(MutationsStorage::<Q>::new_in_root()),
     };
 
-    let current_mutation = use_hook(|| Rc::new(RefCell::new(None)));
-
-    // Create or update mutation subscription on changes
-    let mutation = use_memo(use_reactive!(|mutation| {
+    let mut make_mutation = |mutation: &Mutation<Q>, mut prev_mutation: Option<Mutation<Q>>| {
         let _data = storage.insert_or_get_mutation(mutation.clone());
 
         // Update the mutation tasks if there has been a change in the mutation
-        if let Some(prev_mutation) = current_mutation.borrow_mut().take() {
+        if let Some(prev_mutation) = prev_mutation.take() {
             storage.update_tasks(prev_mutation);
         }
+    };
 
-        // Store this new mutation
-        current_mutation.borrow_mut().replace(mutation.clone());
+    let mut current_mutation = use_hook(|| {
+        make_mutation(&mutation, None);
+        Signal::new(mutation.clone())
+    });
 
-        mutation
-    }));
+    if *current_mutation.read() != mutation {
+        let prev = mem::replace(&mut *current_mutation.write(), mutation.clone());
+        make_mutation(&mutation, Some(prev));
+    }
 
-    // Update the query tasks when the scope is dropped
+    // Update the mutation tasks when the scope is dropped
     use_drop({
         move || {
-            storage.update_tasks(mutation.peek().clone());
+            storage.update_tasks(current_mutation.peek().clone());
         }
     });
 
-    UseMutation { mutation }
+    UseMutation {
+        mutation: current_mutation,
+    }
 }
