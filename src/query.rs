@@ -11,10 +11,7 @@ use std::{
 };
 
 use dioxus::prelude::*;
-use dioxus::{
-    hooks::{use_memo, use_reactive},
-    signals::CopyValue,
-};
+use dioxus::signals::CopyValue;
 use dioxus_core::{
     provide_root_context, spawn_forever, use_drop, ReactiveContext, SuspendedFuture, Task,
 };
@@ -548,7 +545,7 @@ impl<Q: QueryCapability> QueryReader<Q> {
 }
 
 pub struct UseQuery<Q: QueryCapability> {
-    query: Memo<Query<Q>>,
+    query: Signal<Query<Q>>,
 }
 
 impl<Q: QueryCapability> Clone for UseQuery<Q> {
@@ -718,7 +715,7 @@ pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
 
     let current_query = use_hook(|| Rc::new(RefCell::new(None)));
 
-    let query = use_memo(use_reactive!(|query| {
+    let mut make_query = |query: &Query<Q>| {
         let query_data = storage.insert_or_get_query(query.clone());
 
         // Update the query tasks if there has been a change in the query
@@ -730,22 +727,30 @@ pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
         current_query.borrow_mut().replace(query.clone());
 
         // Immediately run the query if enabled and the value is stale
-        if query.enabled && query_data.state.borrow().is_stale(&query) {
+        if query.enabled && query_data.state.borrow().is_stale(query) {
             let query = query.clone();
             spawn(async move {
                 QueriesStorage::run_queries(&[(&query, &query_data)]).await;
             });
         }
+    };
 
-        query
-    }));
+    let mut curr_query = use_hook(|| {
+        make_query(&query);
+        Signal::new(query.clone())
+    });
+
+    if *curr_query.read() != query {
+        curr_query.set(query);
+        make_query(&*curr_query.read());
+    }
 
     // Update the query tasks when the scope is dropped
     use_drop({
         move || {
-            storage.update_tasks(query.peek().clone());
+            storage.update_tasks(curr_query.peek().clone());
         }
     });
 
-    UseQuery { query }
+    UseQuery { query: curr_query }
 }
