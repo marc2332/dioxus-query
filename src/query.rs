@@ -713,18 +713,13 @@ pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
         None => provide_root_context(QueriesStorage::<Q>::new_in_root()),
     };
 
-    let current_query = use_hook(|| Rc::new(RefCell::new(None)));
-
-    let mut make_query = |query: &Query<Q>| {
+    let mut make_query = |query: &Query<Q>, mut prev_query: Option<Query<Q>>| {
         let query_data = storage.insert_or_get_query(query.clone());
 
         // Update the query tasks if there has been a change in the query
-        if let Some(prev_query) = current_query.borrow_mut().take() {
+        if let Some(prev_query) = prev_query.take() {
             storage.update_tasks(prev_query);
         }
-
-        // Store this new query
-        current_query.borrow_mut().replace(query.clone());
 
         // Immediately run the query if enabled and the value is stale
         if query.enabled && query_data.state.borrow().is_stale(query) {
@@ -735,22 +730,24 @@ pub fn use_query<Q: QueryCapability>(query: Query<Q>) -> UseQuery<Q> {
         }
     };
 
-    let mut curr_query = use_hook(|| {
-        make_query(&query);
+    let mut current_query = use_hook(|| {
+        make_query(&query, None);
         Signal::new(query.clone())
     });
 
-    if *curr_query.read() != query {
-        curr_query.set(query);
-        make_query(&*curr_query.read());
+    if *current_query.read() != query {
+        let prev = mem::replace(&mut *current_query.write(), query.clone());
+        make_query(&query, Some(prev));
     }
 
     // Update the query tasks when the scope is dropped
     use_drop({
         move || {
-            storage.update_tasks(curr_query.peek().clone());
+            storage.update_tasks(current_query.peek().clone());
         }
     });
 
-    UseQuery { query: curr_query }
+    UseQuery {
+        query: current_query,
+    }
 }
